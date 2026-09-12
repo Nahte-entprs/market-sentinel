@@ -1,0 +1,26 @@
+name: "Centinela"
+version: "1.0.0"
+slug: centinela
+description: "Radar de mercado headless. La UI es un dashboard Lovelace, no este add-on."
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: services
+boot: auto
+hassio_api: false
+ports: {}
+options:
+  mqtt_url: "mqtt://core-mosquitto:1883"
+  mqtt_user: ""
+  mqtt_password: ""
+  tz: "America/Santiago"
+  llama_server_url: ""
+  remote_worker_url: ""
+schema:
+  mqtt_url: str
+  mqtt_user: str
+  mqtt_password: password
+  tz: str
+  llama_server_url: str
+  remote_worker_url: str

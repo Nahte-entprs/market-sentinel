@@ -1,0 +1,10 @@
+node_modules
+dist
+preview/dist
+data/centinela.db
+data/centinela.db-wal
+data/centinela.db-shm
+data/models/*.gguf
+.env
+*.log
+.DS_Store

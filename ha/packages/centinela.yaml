@@ -1,0 +1,56 @@
+# Paquete Home Assistant — copiar a /config/packages/centinela.yaml
+# En configuration.yaml:
+#   homeassistant:
+#     packages: !include_dir_named packages
+
+automation:
+  - id: centinela_alert_companion
+    alias: "Centinela → Companion"
+    mode: queued
+    max: 10
+    trigger:
+      - platform: mqtt
+        topic: centinela/alert
+    condition:
+      - condition: template
+        value_template: "{{ (trigger.payload_json.score | default(0) | float) >= 6 }}"
+    action:
+      - service: notify.notify
+        data:
+          title: "Centinela {{ trigger.payload_json.regime }} · {{ trigger.payload_json.score }}/10"
+          message: >
+            {{ trigger.payload_json.title }}
+
+            {% for w in trigger.payload_json.why[:6] %}✓ {{ w.text }}
+            {% endfor %}
+            Confianza {{ trigger.payload_json.confidence }}%. No es consejo financiero.
+          data:
+            url: /dashboard-centinela/radar
+            ttl: 0
+            priority: high
+
+  - id: centinela_digest_companion
+    alias: "Centinela digest → Companion"
+    mode: queued
+    trigger:
+      - platform: mqtt
+        topic: centinela/digest
+    action:
+      - service: notify.notify
+        data:
+          title: "Centinela briefing"
+          message: "{{ trigger.payload_json.text[:220] }}"
+
+  - id: centinela_crisis_companion
+    alias: "Centinela régimen CRISIS"
+    trigger:
+      - platform: mqtt
+        topic: centinela/regime
+    condition:
+      - condition: template
+        value_template: "{{ trigger.payload_json.regime == 'CRISIS' }}"
+    action:
+      - service: notify.notify
+        data:
+          title: "Centinela · CRISIS"
+          message: "Régimen CRISIS. Umbrales más sensibles. Revisa el dashboard."

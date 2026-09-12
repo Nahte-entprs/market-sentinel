@@ -1,0 +1,58 @@
+[
+  {
+    "id": "centinela-flow",
+    "label": "Centinela",
+    "nodes": [
+      {
+        "id": "mqtt-alert",
+        "type": "mqtt in",
+        "z": "centinela-flow",
+        "name": "centinela/alert",
+        "topic": "centinela/alert",
+        "qos": "0",
+        "broker": "",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 80,
+        "wires": [["parse-alert"]]
+      },
+      {
+        "id": "parse-alert",
+        "type": "function",
+        "z": "centinela-flow",
+        "name": "formato Companion",
+        "func": "let j = msg.payload;\nif (typeof j === 'string') { try { j = JSON.parse(j); } catch (e) { return null; } }\nif (!j || (j.score || 0) < 6) return null;\nconst why = (j.why || []).slice(0, 6).map(w => '✓ ' + w.text).join('\\n');\nmsg.payload = {\n  data: {\n    title: 'Centinela ' + (j.regime || '') + ' · ' + j.score + '/10',\n    message: (j.title || '') + '\\n' + why + '\\nNo es consejo financiero.'\n  }\n};\nreturn msg;",
+        "outputs": 1,
+        "x": 380,
+        "y": 80,
+        "wires": [["call-notify"]]
+      },
+      {
+        "id": "call-notify",
+        "type": "api-call-service",
+        "z": "centinela-flow",
+        "name": "notify.notify",
+        "server": "",
+        "version": 5,
+        "debugenabled": false,
+        "domain": "notify",
+        "service": "notify",
+        "x": 620,
+        "y": 80,
+        "wires": [[]]
+      },
+      {
+        "id": "note",
+        "type": "comment",
+        "z": "centinela-flow",
+        "name": "Opcional: el paquete YAML ya notifica a Companion. Este flujo es un puente extra.",
+        "x": 280,
+        "y": 40,
+        "wires": []
+      }
+    ]
+  }
+]

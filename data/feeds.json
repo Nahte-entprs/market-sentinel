@@ -1,0 +1,108 @@
+{
+  "feeds": [
+    {
+      "id": "sec-8k",
+      "name": "SEC EDGAR 8-K",
+      "tier": "T0",
+      "kind": "rss",
+      "jobs": ["ticker.events"],
+      "url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&owner=include&count=40&output=atom"
+    },
+    {
+      "id": "sec-6k",
+      "name": "SEC EDGAR 6-K",
+      "tier": "T0",
+      "kind": "rss",
+      "jobs": ["ticker.events"],
+      "url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=6-K&owner=include&count=20&output=atom"
+    },
+    {
+      "id": "fed-press",
+      "name": "Federal Reserve press",
+      "tier": "T0",
+      "kind": "rss",
+      "jobs": ["macro.scan", "ideas.eval"],
+      "url": "https://www.federalreserve.gov/feeds/press_all.xml"
+    },
+    {
+      "id": "eia",
+      "name": "EIA today in energy",
+      "tier": "T0",
+      "kind": "rss",
+      "jobs": ["macro.scan", "ideas.eval"],
+      "url": "https://www.eia.gov/rss/todayinenergy.xml"
+    },
+    {
+      "id": "treasury",
+      "name": "US Treasury",
+      "tier": "T0",
+      "kind": "rss",
+      "jobs": ["macro.scan"],
+      "url": "https://home.treasury.gov/system/xml/0"
+    },
+    {
+      "id": "globe-pr",
+      "name": "GlobeNewswire",
+      "tier": "T0",
+      "kind": "rss",
+      "jobs": ["ticker.events"],
+      "url": "https://www.globenewswire.com/RssFeed/subjectcode/13-Earnings%20Releases/feedTitle/GlobeNewswire%20-%20Earnings%20Releases"
+    },
+    {
+      "id": "reuters-biz",
+      "name": "Reuters Business",
+      "tier": "T1",
+      "kind": "rss",
+      "jobs": ["ticker.events", "macro.scan", "ideas.eval"],
+      "url": "https://feeds.reuters.com/reuters/businessNews"
+    },
+    {
+      "id": "cnbc-top",
+      "name": "CNBC Top News",
+      "tier": "T1",
+      "kind": "rss",
+      "jobs": ["ticker.events", "macro.scan", "market.sentiment", "ideas.eval"],
+      "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"
+    },
+    {
+      "id": "cnbc-world",
+      "name": "CNBC World",
+      "tier": "T1",
+      "kind": "rss",
+      "jobs": ["macro.scan", "ideas.eval"],
+      "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362"
+    },
+    {
+      "id": "yahoo-finance-news",
+      "name": "Yahoo Finance headlines",
+      "tier": "T1",
+      "kind": "rss",
+      "jobs": ["ticker.events", "market.sentiment"],
+      "url": "https://finance.yahoo.com/news/rssindex"
+    },
+    {
+      "id": "google-iran",
+      "name": "Google News Iran/Hormuz",
+      "tier": "T2",
+      "kind": "rss",
+      "jobs": ["macro.scan", "ideas.eval"],
+      "url": "https://news.google.com/rss/search?q=Iran+OR+%22Strait+of+Hormuz%22+OR+Tehran+oil&hl=en-US&gl=US&ceid=US:en"
+    },
+    {
+      "id": "google-semis",
+      "name": "Google News semiconductors",
+      "tier": "T2",
+      "kind": "rss",
+      "jobs": ["ticker.events"],
+      "url": "https://news.google.com/rss/search?q=semiconductor+OR+HBM+OR+%22export+controls%22+OR+Micron+OR+TSMC&hl=en-US&gl=US&ceid=US:en"
+    },
+    {
+      "id": "wsb-rss",
+      "name": "r/wallstreetbets RSS",
+      "tier": "T3",
+      "kind": "rss",
+      "jobs": ["reddit.rising", "market.sentiment"],
+      "url": "https://www.reddit.com/r/wallstreetbets/.rss"
+    }
+  ]
+}

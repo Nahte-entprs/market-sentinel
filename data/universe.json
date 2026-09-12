@@ -1,0 +1,64 @@
+{
+  "tickers": [
+    { "symbol": "MU", "name": "Micron", "sector": "memory" },
+    { "symbol": "SNDK", "name": "Sandisk", "sector": "memory" },
+    { "symbol": "NBIS", "name": "Nebius", "sector": "ai" },
+    { "symbol": "BE", "name": "Bloom Energy", "sector": "energy" },
+    { "symbol": "INTC", "name": "Intel", "sector": "semiconductors" },
+    { "symbol": "GOOG", "name": "Alphabet", "sector": "cloud" },
+    { "symbol": "NVDA", "name": "NVIDIA", "sector": "ai" },
+    { "symbol": "AVGO", "name": "Broadcom", "sector": "semiconductors" },
+    { "symbol": "TSM", "name": "TSMC", "sector": "semiconductors" },
+    { "symbol": "AMD", "name": "AMD", "sector": "semiconductors" },
+    { "symbol": "MSFT", "name": "Microsoft", "sector": "cloud" },
+    { "symbol": "AMZN", "name": "Amazon", "sector": "cloud" },
+    { "symbol": "ORCL", "name": "Oracle", "sector": "cloud" }
+  ],
+  "etfs": [
+    { "symbol": "SMH", "name": "Semiconductor ETF", "sector": "semiconductors" },
+    { "symbol": "SOXX", "name": "iShares Semiconductor", "sector": "semiconductors" },
+    { "symbol": "SKYY", "name": "Cloud ETF", "sector": "cloud" },
+    { "symbol": "IGV", "name": "Software ETF", "sector": "cloud" },
+    { "symbol": "XLE", "name": "Energy Select", "sector": "energy" },
+    { "symbol": "XBI", "name": "Biotech ETF", "sector": "biotech" },
+    { "symbol": "QQQ", "name": "Nasdaq 100", "sector": "ai" },
+    { "symbol": "SPY", "name": "S&P 500", "sector": "ai" },
+    { "symbol": "USO", "name": "Oil ETF", "sector": "energy" }
+  ],
+  "macros": [
+    { "symbol": "CL=F", "name": "WTI crude", "factor": "oil" },
+    { "symbol": "USDJPY=X", "name": "USD/JPY", "factor": "usdjpy" },
+    { "symbol": "^TNX", "name": "US 10Y yield", "factor": "yield10y" },
+    { "symbol": "^VIX", "name": "VIX", "factor": "geopolitical_risk" }
+  ],
+  "sectors": [
+    { "id": "semiconductors", "label": "Semiconductors", "etf": "SMH" },
+    { "id": "memory", "label": "Memory", "etf": "SMH" },
+    { "id": "ai", "label": "AI", "etf": "QQQ" },
+    { "id": "cloud", "label": "Cloud", "etf": "SKYY" },
+    { "id": "energy", "label": "Energy", "etf": "XLE" },
+    { "id": "biotech", "label": "Biotech", "etf": "XBI" }
+  ],
+  "factors": [
+    { "id": "iran", "label": "Iran", "keywords": ["iran", "tehran", "irgc", "persian gulf"], "elevated": 1 },
+    { "id": "oil", "label": "Oil", "keywords": ["oil", "crude", "brent", "wti"] },
+    { "id": "hormuz", "label": "Strait of Hormuz", "keywords": ["hormuz", "strait of hormuz", "tanker"] },
+    { "id": "china", "label": "China", "keywords": ["china", "beijing", "prc"] },
+    { "id": "taiwan", "label": "Taiwan", "keywords": ["taiwan", "taipei", "tsmc"] },
+    { "id": "japan", "label": "Japan", "keywords": ["japan", "yen", "boj"] },
+    { "id": "usdjpy", "label": "USDJPY", "keywords": ["usdjpy", "yen"] },
+    { "id": "yield10y", "label": "10Y yield", "keywords": ["10-year", "10y", "treasury yield"] },
+    { "id": "fed", "label": "Fed", "keywords": ["federal reserve", "fomc", "powell", "fed "] },
+    { "id": "tariffs", "label": "Tariffs", "keywords": ["tariff", "duties", "trade war"] },
+    { "id": "export_controls", "label": "Export controls", "keywords": ["export control", "bis", "entity list", "export restriction"] }
+  ],
+  "ideas": [
+    {
+      "id": "idea-iran-control",
+      "title": "Guerra Irán",
+      "claim": "Trump perdió el control de poder terminarla cuando quiera",
+      "factorId": "iran",
+      "verdict": "open"
+    }
+  ]
+}

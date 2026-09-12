@@ -1,0 +1,77 @@
+{
+  "MU": {
+    "bull": [
+      { "id": "hbm_demand", "label": "Demanda HBM", "keywords": ["hbm", "high bandwidth", "hbm3", "hbm4"], "nodes": ["hbm", "ai_capex"] },
+      { "id": "dram_pricing", "label": "Precio DRAM", "keywords": ["dram price", "memory pricing", "spot dram"], "nodes": ["dram"] },
+      { "id": "ai_capex", "label": "Capex de IA", "keywords": ["ai capex", "gpu cluster", "data center build"], "nodes": ["ai_capex", "data_centers"] },
+      { "id": "supply", "label": "Oferta restringida", "keywords": ["tight supply", "sold out", "allocation"], "nodes": ["memory"] }
+    ],
+    "bear": [
+      { "id": "china", "label": "China / controles de exportación", "keywords": ["export control", "bis", "china ban", "entity list"], "nodes": ["china", "export_controls"] },
+      { "id": "oversupply", "label": "Sobreoferta de capex", "keywords": ["oversupply", "capacity glut", "capex cut"], "nodes": ["dram"] },
+      { "id": "pricing_down", "label": "Deterioro de precios", "keywords": ["price decline", "asp down", "memory glut"], "nodes": ["dram"] },
+      { "id": "macro", "label": "Slowdown macro", "keywords": ["recession", "demand destruction", "pc demand"], "nodes": ["yield10y"] }
+    ],
+    "catalysts": [
+      { "id": "earnings", "label": "Earnings", "keywords": ["earnings", "eps", "guidance"], "nodes": [] },
+      { "id": "hbm_news", "label": "Anuncios HBM", "keywords": ["hbm", "sk hynix", "samsung hbm"], "nodes": ["hbm", "sk_hynix", "samsung"] }
+    ],
+    "risks": [
+      { "id": "export", "label": "Restricciones de exportación", "keywords": ["export restriction", "bis", "wafer"], "nodes": ["export_controls"] },
+      { "id": "hyperscaler", "label": "Freno de capex hyperscaler", "keywords": ["capex slowdown", "hyperscaler pause"], "nodes": ["ai_capex"] }
+    ]
+  },
+  "NVDA": {
+    "bull": [
+      { "id": "gpu_demand", "label": "Demanda GPU", "keywords": ["blackwell", "hopper", "gpu demand", "cuda"], "nodes": ["ai_capex"] },
+      { "id": "inference", "label": "Inference scale-out", "keywords": ["inference", "tokens", "nvlink"], "nodes": ["data_centers"] }
+    ],
+    "bear": [
+      { "id": "china", "label": "China / export controls", "keywords": ["h20", "export control", "china gpu"], "nodes": ["china", "export_controls"] },
+      { "id": "competition", "label": "Competencia custom silicon", "keywords": ["tpu", "trainium", "custom asic"], "nodes": ["cloud"] }
+    ],
+    "catalysts": [{ "id": "earnings", "label": "Earnings", "keywords": ["earnings", "data center revenue"], "nodes": [] }],
+    "risks": [{ "id": "export", "label": "Export controls", "keywords": ["bis", "export"], "nodes": ["export_controls"] }]
+  },
+  "BE": {
+    "bull": [
+      { "id": "ai_power", "label": "Energía para data centers", "keywords": ["fuel cell", "data center power", "bloom"], "nodes": ["data_centers", "energy"] },
+      { "id": "index", "label": "Inclusión en índices", "keywords": ["s&p 500", "included in", "index addition", "russell"], "nodes": ["index_inclusion"] }
+    ],
+    "bear": [
+      { "id": "dilution", "label": "Dilución / ejecución", "keywords": ["offering", "dilution", "guidance cut"], "nodes": [] }
+    ],
+    "catalysts": [{ "id": "sp500", "label": "Rumores S&P 500", "keywords": ["s&p 500", "spx inclusion"], "nodes": ["index_inclusion"] }],
+    "risks": [{ "id": "valuation", "label": "Valoración post-run", "keywords": ["overbought", "multiple"], "nodes": [] }]
+  },
+  "TSM": {
+    "bull": [{ "id": "foundry", "label": "Nodo avanzado", "keywords": ["2nm", "3nm", "n2", "foundry"], "nodes": ["taiwan", "semiconductors"] }],
+    "bear": [{ "id": "geopol", "label": "Riesgo Taiwán", "keywords": ["taiwan", "blockade", "strait"], "nodes": ["taiwan"] }],
+    "catalysts": [{ "id": "earnings", "label": "Earnings", "keywords": ["earnings"], "nodes": [] }],
+    "risks": [{ "id": "taiwan", "label": "Taiwán", "keywords": ["taiwan", "china"], "nodes": ["taiwan", "china"] }]
+  },
+  "SNDK": {
+    "bull": [{ "id": "nand", "label": "Ciclo NAND", "keywords": ["nand", "flash", "ssd"], "nodes": ["nand"] }],
+    "bear": [{ "id": "cycle", "label": "Ciclo de memoria", "keywords": ["oversupply", "asp"], "nodes": ["nand"] }],
+    "catalysts": [],
+    "risks": []
+  },
+  "AMD": {
+    "bull": [{ "id": "mi300", "label": "Aceleradores MI", "keywords": ["mi300", "mi350", "instinct"], "nodes": ["ai_capex"] }],
+    "bear": [{ "id": "share", "label": "Share vs NVIDIA", "keywords": ["gpu share", "cuda moat"], "nodes": ["ai"] }],
+    "catalysts": [],
+    "risks": [{ "id": "china", "label": "China", "keywords": ["china", "export"], "nodes": ["china"] }]
+  },
+  "GOOG": {
+    "bull": [{ "id": "cloud", "label": "GCP / TPU", "keywords": ["gcp", "tpu", "gemini", "backlog"], "nodes": ["cloud", "data_centers"] }],
+    "bear": [{ "id": "ads", "label": "Ads / regulación", "keywords": ["doj", "antitrust", "ad slowdown"], "nodes": [] }],
+    "catalysts": [],
+    "risks": []
+  },
+  "INTC": {
+    "bull": [{ "id": "foundry", "label": "Foundry 18A", "keywords": ["18a", "foundry", "intel 18a"], "nodes": ["semiconductors"] }],
+    "bear": [{ "id": "exec", "label": "Ejecución / delays", "keywords": ["delay", "yield", "impairment"], "nodes": [] }],
+    "catalysts": [],
+    "risks": []
+  }
+}

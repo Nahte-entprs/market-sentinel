@@ -1,0 +1,81 @@
+title: Centinela
+views:
+  - title: Radar
+    path: radar
+    icon: mdi:radar
+    cards:
+      - type: markdown
+        content: >
+          Dashboard **nativo** (sin HACS). Régimen, alerta WHY, tickers, ideas y tareas.
+          No es consejo financiero.
+
+      - type: entity
+        entity: sensor.centinela_regime
+        name: Régimen
+
+      - type: entity
+        entity: sensor.centinela_last_alert
+        name: Última alerta
+
+      - type: markdown
+        content: |
+          ### WHY
+          {% set why = state_attr('sensor.centinela_last_alert', 'friendly_why') %}
+          {% if why %}
+          {% for w in why %}
+          ✓ {{ w }}
+          {% endfor %}
+          {% else %}
+          Sin eventos materiales sobre el umbral.
+          {% endif %}
+
+      - type: markdown
+        content: |
+          ### Tickers
+          {% set ticks = state_attr('sensor.centinela_watchlist', 'tickers') or [] %}
+          {{ ticks | join(' · ') }}
+
+      - type: entities
+        title: Añadir ticker
+        entities:
+          - entity: text.centinela_nuevo_ticker
+          - entity: button.centinela_add_ticker
+
+      - type: markdown
+        content: |
+          ### Ideas de mercado
+          {% set ideas = state_attr('sensor.centinela_ideas', 'ideas') or [] %}
+          {% for i in ideas %}
+          **{{ i.title }}** — `{{ i.verdict }}`
+
+          {{ i.claim }}
+          {% endfor %}
+
+      - type: entities
+        title: Nueva idea
+        entities:
+          - entity: text.centinela_idea_titulo
+          - entity: text.centinela_idea_claim
+          - entity: select.centinela_idea_factor
+          - entity: button.centinela_add_idea
+
+      - type: entities
+        title: Tareas (Run now = botón)
+        entities:
+          - entity: sensor.centinela_job_macro_scan
+          - entity: button.centinela_run_macro_scan
+          - entity: sensor.centinela_job_ticker_events
+          - entity: button.centinela_run_ticker_events
+          - entity: sensor.centinela_job_market_sentiment
+          - entity: button.centinela_run_market_sentiment
+          - entity: sensor.centinela_job_volume_unusual
+          - entity: button.centinela_run_volume_unusual
+          - entity: sensor.centinela_job_reddit_rising
+          - entity: button.centinela_run_reddit_rising
+          - entity: sensor.centinela_job_ideas_eval
+          - entity: button.centinela_run_ideas_eval
+
+      - type: markdown
+        content: |
+          ### Briefing
+          {{ state_attr('sensor.centinela_digest', 'text') or states('sensor.centinela_digest') }}
