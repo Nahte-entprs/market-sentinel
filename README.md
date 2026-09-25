@@ -4,13 +4,21 @@ Centinela vigila cotizaciones, noticias, macros y Reddit **en loop**, sin gastar
 
 No es consejo financiero. No es un chatbot ni un broker.
 
-## HAOS: no usas Docker a mano
+## HAOS: tienda de complementos
 
-El G3 Plus corre **Home Assistant OS**. No instalas Docker Engine ni `docker compose`.
+Este GitHub es un **repositorio de complementos** (`repository.json` + carpeta `centinela/`). En el G3 no haces `git clone` a `/addons`.
 
-El `Dockerfile` y `config.yaml` de la raíz existen porque así es un **add-on local**: Supervisor (el gestor de complementos de HAOS) los usa al pulsar Instalar. Por debajo HAOS aísla los add-ons; tú solo ves Ajustes → Complementos.
+Ajustes → Complementos → tienda (⋮) → **Repositorios** → pega:
 
-No hace falta Portainer ni SSH con Docker.
+```
+https://github.com/Nahte-entprs/market-sentinel
+```
+
+Instala **Centinela**. Cuando suba `version` en `centinela/config.yaml`, HA ofrece **Actualizar**.
+
+Si ya lo instalaste como complemento **local**, páralo, desinstálalo y borra `/addons/centinela` antes de usar la tienda.
+
+El `Dockerfile` lo usa Supervisor al instalar; no hace falta Docker ni Portainer a mano.
 
 ## Dos máquinas
 
@@ -20,7 +28,9 @@ No hace falta Portainer ni SSH con Docker.
 ## Desarrollo (PC o cloud)
 
 ```bash
+cd centinela
 npm install
+cd ..
 npm run dev
 ```
 
@@ -31,10 +41,9 @@ npm run dev
 
 1. HACS → **Mushroom** (opcional; hay [`ha/lovelace/centinela-native.yaml`](ha/lovelace/centinela-native.yaml)).
 2. Complemento **Mosquitto**. Anota usuario/clave.
-3. Copia **todo este repo** a `/addons/centinela` (Samba `addons` o git en la Terminal SSH).
-4. Ajustes → Complementos → menú → **Complementos locales** → Centinela → Instalar.
-5. Opciones: `mqtt_url: mqtt://core-mosquitto:1883`, usuario/clave, `TZ=America/Santiago`.
-6. En `configuration.yaml`:
+3. Tienda → repositorio `https://github.com/Nahte-entprs/market-sentinel` → **Centinela** → Instalar.
+4. Opciones: `mqtt_url: mqtt://core-mosquitto:1883`, usuario/clave, `TZ=America/Santiago`.
+5. En `configuration.yaml`:
 
 ```yaml
 homeassistant:
@@ -42,9 +51,9 @@ homeassistant:
 ```
 
    Copia [`ha/packages/centinela.yaml`](ha/packages/centinela.yaml) a `/config/packages/`.
-7. Nuevo dashboard: pega [`ha/lovelace/centinela.yaml`](ha/lovelace/centinela.yaml).
-8. Arranca el add-on. Debe aparecer el dispositivo **Centinela** (MQTT).
-9. Tickers e ideas en Lovelace. Los avisos van a la app **Companion**.
+6. Nuevo dashboard: pega [`ha/lovelace/centinela.yaml`](ha/lovelace/centinela.yaml) o [`ha/lovelace/centinela-native.yaml`](ha/lovelace/centinela-native.yaml).
+7. Arranca el add-on. Debe aparecer el dispositivo **Centinela** (MQTT).
+8. Tickers e ideas en Lovelace. Los avisos van a la app **Companion**.
 
 Node-RED es opcional ([`nodered/centinela.json`](nodered/centinela.json)). El add-on **no publica puerto de UI**.
 
@@ -74,9 +83,9 @@ en las opciones del add-on. Ventana de 10 min; si no hay modelo, no pasa nada.
 
 ## Extender
 
-- Nueva tarea: `src/jobs.ts` (registro `JOBS`).
+- Nueva tarea: [`centinela/src/jobs.ts`](centinela/src/jobs.ts) (registro `JOBS`).
 - Ticker o idea: dashboard HA, sin reinstalar.
-- Grafo / tesis / feeds: [`data/event-graph.json`](data/event-graph.json), [`data/thesis.json`](data/thesis.json), [`data/feeds.json`](data/feeds.json).
+- Grafo / tesis / feeds: [`centinela/data/event-graph.json`](centinela/data/event-graph.json), [`centinela/data/thesis.json`](centinela/data/thesis.json), [`centinela/data/feeds.json`](centinela/data/feeds.json).
 
 ## Hardware
 

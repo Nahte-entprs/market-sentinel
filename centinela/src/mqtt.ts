@@ -65,10 +65,11 @@ export async function startMqtt(handlers: {
 }
 
 function disc(component: string, id: string, extra: Record<string, unknown>) {
-  const topic = `${DISCOVERY}/${component}/centinela_${id}/config`;
+  const objectId = `centinela_${id}`;
+  const topic = `${DISCOVERY}/${component}/${objectId}/config`;
   const payload = {
-    unique_id: `centinela_${id}`,
-    object_id: `centinela_${id}`,
+    unique_id: objectId,
+    default_entity_id: `${component}.${objectId}`,
     device,
     ...extra,
   };

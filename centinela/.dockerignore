@@ -1,10 +1,6 @@
 node_modules
 .git
-preview
-preview/dist
 data/centinela.db
 data/centinela.db-wal
 data/centinela.db-shm
 data/models
-ha
-nodered
