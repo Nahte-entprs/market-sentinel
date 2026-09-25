@@ -72,8 +72,21 @@ views:
           - entity: button.centinela_run_volume_unusual
           - entity: sensor.centinela_job_reddit_rising
           - entity: button.centinela_run_reddit_rising
+          - entity: sensor.centinela_job_reddit_subs
+          - entity: button.centinela_run_reddit_subs
           - entity: sensor.centinela_job_ideas_eval
           - entity: button.centinela_run_ideas_eval
+
+      - type: markdown
+        content: |
+          ### Reddit emergentes
+          {% set em = state_attr('sensor.centinela_reddit_emerging', 'tickers') or [] %}
+          {% if em | length == 0 %}Sin pico vs su propia media 7d (NVDA/SPY no cuentan).{% endif %}
+          {% for e in em %}
+          **{{ e.ticker }}** · {{ e.comments }} cmt · {{ e.subs | join(', ') }}{% if e.ratio7d %} · ×{{ e.ratio7d | round(1) }}{% endif %}
+
+          {% endfor %}
+          {{ states('sensor.centinela_reddit_wsb') }} · {{ states('sensor.centinela_reddit_subs') }}
 
       - type: markdown
         content: |

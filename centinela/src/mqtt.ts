@@ -1,6 +1,7 @@
 import mqtt from "mqtt";
 import { config } from "./config.ts";
 import type { AlertRecord, IdeaRecord, JobInfo, Regime } from "./types.ts";
+import type { SocialRun } from "./reddit-social.ts";
 
 type HaDevice = {
   identifiers: string[];
@@ -107,6 +108,24 @@ function publishDiscovery() {
     json_attributes_topic: `${PREFIX}/sensor/ideas_attr`,
     icon: "mdi:lightbulb-outline",
   });
+  disc("sensor", "reddit_wsb", {
+    name: "WSB daily",
+    state_topic: `${PREFIX}/sensor/reddit_wsb`,
+    json_attributes_topic: `${PREFIX}/sensor/reddit_wsb_attr`,
+    icon: "mdi:reddit",
+  });
+  disc("sensor", "reddit_subs", {
+    name: "Reddit subs",
+    state_topic: `${PREFIX}/sensor/reddit_subs`,
+    json_attributes_topic: `${PREFIX}/sensor/reddit_subs_attr`,
+    icon: "mdi:reddit",
+  });
+  disc("sensor", "reddit_emerging", {
+    name: "Tickers emergentes Reddit",
+    state_topic: `${PREFIX}/sensor/reddit_emerging`,
+    json_attributes_topic: `${PREFIX}/sensor/reddit_emerging_attr`,
+    icon: "mdi:chart-timeline-variant",
+  });
   disc("text", "nuevo_ticker", {
     name: "Nuevo ticker",
     command_topic: `${PREFIX}/cmd/ticker_draft`,
@@ -160,6 +179,7 @@ function publishDiscovery() {
     "market.sentiment",
     "volume.unusual",
     "reddit.rising",
+    "reddit.subs",
     "quotes.poll",
     "ideas.eval",
     "digest.brief",
@@ -218,6 +238,27 @@ export function publishWatchlist(symbols: string[]) {
 export function publishIdeas(ideas: IdeaRecord[]) {
   pub(`${PREFIX}/sensor/ideas`, String(ideas.length));
   pub(`${PREFIX}/sensor/ideas_attr`, { ideas });
+}
+
+export function publishSocial(run: SocialRun) {
+  const top = run.emerging[0]?.ticker ?? "none";
+  const attr = {
+    source: run.source,
+    thread: run.threadTitle,
+    comments: run.comments,
+    emerging: run.emerging,
+    staples: run.staples,
+    errors: run.errors,
+  };
+  const key = run.source === "wsb_daily" ? "reddit_wsb" : "reddit_subs";
+  pub(`${PREFIX}/sensor/${key}`, `${run.comments} cmt · ${run.emerging.length} emerging`);
+  pub(`${PREFIX}/sensor/${key}_attr`, attr);
+  pub(`${PREFIX}/sensor/reddit_emerging`, top);
+  pub(`${PREFIX}/sensor/reddit_emerging_attr`, {
+    tickers: run.emerging,
+    staples: run.staples,
+    source: run.source,
+  });
 }
 
 export function publishJob(job: JobInfo) {

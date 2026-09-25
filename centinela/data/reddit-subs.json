@@ -1,0 +1,8 @@
+{
+  "wsb": "wallstreetbets",
+  "dailyTitleIncludes": ["daily discussion", "weekend discussion"],
+  "subs": ["stocks", "pennystocks", "pennystock", "smallstreetbets", "investing", "theraceto10million"],
+  "hotPostsPerSub": 5,
+  "commentsPerPost": 40,
+  "commentsDaily": 220
+}

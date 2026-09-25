@@ -48,6 +48,7 @@ function ensureJobRows() {
     "market.sentiment",
     "volume.unusual",
     "reddit.rising",
+    "reddit.subs",
     "regime.tick",
     "digest.brief",
     "reaction.snap",

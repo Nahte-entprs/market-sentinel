@@ -3,12 +3,12 @@ import { isRth } from "./config.ts";
 import { listFactors, listIdeas, listTickers } from "./universe.ts";
 import { allQuoteSymbols, allQuotes, getQuote, refreshQuotes } from "./quotes.ts";
 import { ingestFeeds, recentNews } from "./news.ts";
-import { extractCashtags, extractEntities, isMegaCap, lexiconPolarity, matchThesis } from "./entities.ts";
+import { extractEntities, lexiconPolarity, matchThesis } from "./entities.ts";
 import { tickersFromEntities } from "./graph.ts";
 import { computeRegime, confidenceFrom, currentRegime, scoreThreshold } from "./regime.ts";
 import { emitIfNeeded, lastAlert, lastDigest, listAlerts, saveDigest } from "./alerts.ts";
-import { fetchJson } from "./news.ts";
-import { publishIdeas, publishJob, publishRegime, publishStatus, publishWatchlist } from "./mqtt.ts";
+import { collectOtherSubs, collectWsbDaily, ensureRedditTables } from "./reddit-social.ts";
+import { publishIdeas, publishJob, publishRegime, publishSocial, publishStatus, publishWatchlist } from "./mqtt.ts";
 import type { Candidate, IdeaRecord, JobInfo, JobStatus, WhyItem } from "./types.ts";
 
 type JobDef = {
@@ -354,62 +354,25 @@ async function sentimentJob() {
 }
 
 async function redditJob() {
-  let titles: string[] = [];
-  const errors: string[] = [];
-  try {
-    const json = await fetchJson<{ data?: { children?: { data?: { title?: string; selftext?: string } }[] } }>(
-      "https://old.reddit.com/r/wallstreetbets/hot.json?limit=75",
-    );
-    titles = (json.data?.children ?? []).map((c) => `${c.data?.title ?? ""} ${c.data?.selftext ?? ""}`);
-  } catch (e) {
-    errors.push((e as Error).message);
-    const rss = await ingestFeeds("reddit.rising");
-    titles = recentNews(6, 40)
-      .filter((n) => n.source.includes("wallstreetbets") || n.source.includes("WSB") || n.tier === "T3")
-      .map((n) => n.title);
-    if (rss.errors.length) errors.push(...rss.errors);
-  }
-  const counts = new Map<string, number>();
-  const watch = new Set(listTickers().map((t) => t.symbol));
-  for (const t of titles) {
-    const tags = extractCashtags(t);
-    const ents = extractEntities(t);
-    for (const s of [...tags, ...ents]) {
-      if (!watch.has(s) && !/^[A-Z]{2,5}$/.test(s)) continue;
-      if (s.length < 2) continue;
-      counts.set(s, (counts.get(s) ?? 0) + 1);
-    }
-  }
-  const ts = nowIso();
-  const ins = db.prepare("INSERT OR REPLACE INTO wsb_mentions (ticker, captured_at, count) VALUES (?, ?, ?)");
-  for (const [ticker, count] of counts) ins.run(ticker, ts, count);
+  ensureRedditTables();
+  const run = await collectWsbDaily();
+  publishSocial(run);
+  const top = run.emerging.map((e) => e.ticker).join(",") || "none";
+  const err = run.errors.length ? `; ${run.errors[0].slice(0, 80)}` : "";
+  const note = `daily ${run.comments} cmt · emerging ${top}${err}`;
+  console.log(`[job] reddit.rising ${note}`);
+  return note;
+}
 
-  const rising = [...counts.entries()]
-    .filter(([s]) => !isMegaCap(s))
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8);
-
-  for (const [symbol, count] of rising) {
-    const boost = recentWsbBoost(symbol);
-    if (!boost || boost.ratio < 4) continue;
-    const q = getQuote(symbol);
-    const news = recentNews(12, 30).filter((n) => n.entities.includes(symbol) && n.tier !== "T3");
-    const why: WhyItem[] = [{ text: `${symbol} menciones WSB ${boost.text} (n=${count})`, kind: "wsb", weight: 1 }];
-    if (news.length) why.push({ text: `${news.length} noticias no-social`, kind: "news", weight: 3 });
-    if (q) why.push(...whyPriceVol(symbol));
-    const nonWsb = why.filter((w) => w.kind !== "wsb");
-    const score = nonWsb.length ? nonWsb.reduce((a, w) => a + w.weight, 0) + 1 : 3;
-    await emitIfNeeded({
-      title: news.length ? `${symbol} atención WSB + noticias` : `${symbol} sube en WSB (solo social)`,
-      score,
-      confidence: confidenceFrom(why, news.length > 0, news.length),
-      why,
-      jobIds: ["reddit.rising"],
-      symbols: [symbol],
-      sources: [],
-    });
-  }
-  return `hot posts ${titles.length}, cashtags ${counts.size}` + (errors.length ? `; ${errors[0].slice(0, 80)}` : "");
+async function redditSubsJob() {
+  ensureRedditTables();
+  const run = await collectOtherSubs();
+  publishSocial(run);
+  const top = run.emerging.map((e) => e.ticker).join(",") || "none";
+  const err = run.errors.length ? `; ${run.errors.length} sub error` : "";
+  const note = `subs ${run.comments} cmt · emerging ${top}${err}`;
+  console.log(`[job] reddit.subs ${note}`);
+  return note;
 }
 
 async function regimeJob() {
@@ -585,10 +548,17 @@ export const JOBS: JobDef[] = [
   {
     id: "reddit.rising",
     letter: "E",
-    name: "Reddit rising",
-    description: "Cashtags vs baseline; nunca HIGH solo",
+    name: "WSB daily",
+    description: "Comentarios del daily: emergentes vs staples",
     cadenceMs: () => 15 * 60_000,
     run: redditJob,
+  },
+  {
+    id: "reddit.subs",
+    name: "Reddit subs",
+    description: "stocks, pennystocks, investing, etc.",
+    cadenceMs: () => 20 * 60_000,
+    run: redditSubsJob,
   },
   { id: "ideas.eval", name: "Ideas", description: "Apoyar / refutar claims", cadenceMs: () => 20 * 60_000, run: ideasJob },
   { id: "digest.brief", name: "Briefing 2h", description: "Resumen si no hubo HIGH", cadenceMs: () => 2 * 60 * 60_000, run: digestJob },

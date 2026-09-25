@@ -136,6 +136,33 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS reddit_comments (
+  id TEXT PRIMARY KEY,
+  sub TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  body TEXT NOT NULL,
+  score INTEGER NOT NULL,
+  created_utc TEXT NOT NULL,
+  cheap_flag TEXT NOT NULL,
+  body_key TEXT NOT NULL,
+  captured_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS reddit_comment_tickers (
+  comment_id TEXT NOT NULL,
+  ticker TEXT NOT NULL,
+  PRIMARY KEY (comment_id, ticker)
+);
+CREATE TABLE IF NOT EXISTS reddit_ticker_snapshots (
+  ticker TEXT NOT NULL,
+  sub TEXT NOT NULL,
+  captured_at TEXT NOT NULL,
+  mention_comments INTEGER NOT NULL,
+  body_variants INTEGER NOT NULL,
+  cheap_ok INTEGER NOT NULL,
+  PRIMARY KEY (ticker, sub, captured_at)
+);
 `);
 
 export function nowIso() {
