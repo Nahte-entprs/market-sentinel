@@ -1,5 +1,5 @@
 name: "Centinela"
-version: "1.2.0"
+version: "1.2.1"
 slug: centinela
 description: "Radar de mercado headless. La UI es un dashboard Lovelace, no este add-on."
 url: "https://github.com/Nahte-entprs/market-sentinel"

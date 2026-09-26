@@ -109,19 +109,19 @@ function publishDiscovery() {
     icon: "mdi:lightbulb-outline",
   });
   disc("sensor", "reddit_wsb", {
-    name: "WSB daily",
+    name: "reddit wsb",
     state_topic: `${PREFIX}/sensor/reddit_wsb`,
     json_attributes_topic: `${PREFIX}/sensor/reddit_wsb_attr`,
     icon: "mdi:reddit",
   });
   disc("sensor", "reddit_subs", {
-    name: "Reddit subs",
+    name: "reddit subs",
     state_topic: `${PREFIX}/sensor/reddit_subs`,
     json_attributes_topic: `${PREFIX}/sensor/reddit_subs_attr`,
     icon: "mdi:reddit",
   });
   disc("sensor", "reddit_emerging", {
-    name: "Tickers emergentes Reddit",
+    name: "reddit emerging",
     state_topic: `${PREFIX}/sensor/reddit_emerging`,
     json_attributes_topic: `${PREFIX}/sensor/reddit_emerging_attr`,
     icon: "mdi:chart-timeline-variant",
@@ -187,12 +187,12 @@ function publishDiscovery() {
   for (const job of jobs) {
     const slug = job.replaceAll(".", "_");
     disc("sensor", `job_${slug}`, {
-      name: `Tarea ${job}`,
+      name: `job ${job.replaceAll(".", " ")}`,
       state_topic: `${PREFIX}/sensor/job/${job}`,
       json_attributes_topic: `${PREFIX}/sensor/job/${job}/attr`,
     });
     disc("button", `run_${slug}`, {
-      name: `Run ${job}`,
+      name: `run ${job.replaceAll(".", " ")}`,
       command_topic: `${PREFIX}/cmd/run/${job}`,
       icon: "mdi:play",
     });

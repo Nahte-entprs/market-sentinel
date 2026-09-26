@@ -113,18 +113,48 @@ function sleep(ms: number) {
 async function redditJson<T>(pathAndQuery: string): Promise<T> {
   const wait = 1100 - (Date.now() - lastFetch);
   if (wait > 0) await sleep(wait);
-  lastFetch = Date.now();
-  const url = pathAndQuery.startsWith("http") ? pathAndQuery : `https://old.reddit.com${pathAndQuery}`;
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-      Accept: "application/json",
-    },
-    signal: AbortSignal.timeout(18000),
-  });
-  if (!res.ok) throw new Error(`${res.status} ${url}`);
-  return res.json() as Promise<T>;
+  const path = pathAndQuery.startsWith("http")
+    ? pathAndQuery
+    : pathAndQuery.startsWith("/")
+      ? pathAndQuery
+      : `/${pathAndQuery}`;
+  const urls = pathAndQuery.startsWith("http")
+    ? [pathAndQuery]
+    : [
+        `https://www.reddit.com${path}`,
+        `https://www.reddit.com${path.replace("/hot.json", "/hot/.json").replace("/comments/", "/comments/")}`,
+        `https://api.reddit.com${path.replace(".json", "")}`,
+      ];
+  const agents = [
+    `Centinela/1.2.1 (HAOS; +https://github.com/Nahte-entprs/market-sentinel)`,
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+  ];
+  let lastErr = "reddit: sin respuesta";
+  for (const url of [...new Set(urls)]) {
+    for (const ua of agents) {
+      lastFetch = Date.now();
+      try {
+        const res = await fetch(url, {
+          headers: { "User-Agent": ua, Accept: "application/json" },
+          signal: AbortSignal.timeout(18000),
+          redirect: "follow",
+        });
+        if (!res.ok) {
+          lastErr = `${res.status} ${url}`;
+          continue;
+        }
+        const ctype = res.headers.get("content-type") || "";
+        if (!ctype.includes("json") && !ctype.includes("javascript")) {
+          lastErr = `no-json ${url}`;
+          continue;
+        }
+        return (await res.json()) as T;
+      } catch (e) {
+        lastErr = `${(e as Error).message} ${url}`;
+      }
+    }
+  }
+  throw new Error(lastErr);
 }
 
 function cheapFlag(body: string, author: string): CheapFlag {
