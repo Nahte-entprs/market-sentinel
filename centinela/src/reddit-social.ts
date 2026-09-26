@@ -122,11 +122,10 @@ async function redditJson<T>(pathAndQuery: string): Promise<T> {
     ? [pathAndQuery]
     : [
         `https://www.reddit.com${path}`,
-        `https://www.reddit.com${path.replace("/hot.json", "/hot/.json").replace("/comments/", "/comments/")}`,
-        `https://api.reddit.com${path.replace(".json", "")}`,
+        `https://www.reddit.com${path.replace("/hot.json", "/hot/.json")}`,
       ];
   const agents = [
-    `Centinela/1.2.1 (HAOS; +https://github.com/Nahte-entprs/market-sentinel)`,
+    `Centinela/1.2.2 (HAOS; +https://github.com/Nahte-entprs/market-sentinel)`,
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
   ];
   let lastErr = "reddit: sin respuesta";
@@ -233,6 +232,53 @@ async function fetchHot(sub: string, limit: number) {
 async function fetchComments(sub: string, id: string, limit: number, sort: "new" | "top") {
   const j = await redditJson<[Listing, Listing]>(`/r/${sub}/comments/${id}.json?limit=${limit}&sort=${sort}&raw_json=1`);
   return flattenComments(j[1], limit);
+}
+
+type RawCmt = { id?: string; body?: string; author?: string; score?: number; created_utc?: number };
+
+async function fetchArchiveComments(sub: string, size: number): Promise<{ id: string; body: string; score: number; author: string; created: number }[]> {
+  const n = Math.min(Math.max(size, 25), 100);
+  const urls = [
+    `https://api.pullpush.io/reddit/search/comment/?subreddit=${encodeURIComponent(sub)}&size=${n}&sort=desc`,
+    `https://arctic-shift.photon-reddit.com/api/comments/search?subreddit=${encodeURIComponent(sub)}&limit=${n}`,
+  ];
+  let last = "archivo reddit vacío";
+  for (const url of urls) {
+    const wait = 800 - (Date.now() - lastFetch);
+    if (wait > 0) await sleep(wait);
+    lastFetch = Date.now();
+    try {
+      const res = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "Centinela/1.2.2 (+https://github.com/Nahte-entprs/market-sentinel)",
+        },
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!res.ok) {
+        last = `${res.status} ${url}`;
+        continue;
+      }
+      const j = (await res.json()) as { data?: RawCmt[] } | RawCmt[];
+      const rows = Array.isArray(j) ? j : j.data;
+      if (!Array.isArray(rows) || !rows.length) {
+        last = `empty ${url}`;
+        continue;
+      }
+      return rows
+        .map((o) => ({
+          id: String(o.id ?? ""),
+          body: String(o.body ?? ""),
+          score: Number(o.score ?? 0),
+          author: String(o.author ?? ""),
+          created: Number(o.created_utc ?? 0),
+        }))
+        .filter((c) => c.id && c.body);
+    } catch (e) {
+      last = `${(e as Error).message} ${url}`;
+    }
+  }
+  throw new Error(last);
 }
 
 function persistComment(row: {
@@ -476,7 +522,16 @@ export async function collectWsbDaily(): Promise<SocialRun> {
     threadTitle = daily.title ?? null;
     comments = await fetchComments(c.wsb, daily.id, c.commentsDaily, "new");
   } catch (e) {
-    errors.push((e as Error).message);
+    errors.push(`json: ${(e as Error).message}`.slice(0, 160));
+  }
+  if (!comments.length) {
+    try {
+      comments = await fetchArchiveComments(c.wsb, c.commentsDaily);
+      threadId = threadId || "archive";
+      threadTitle = threadTitle || "r/wallstreetbets recientes (archivo; Reddit JSON bloqueado)";
+    } catch (e) {
+      errors.push(`archivo: ${(e as Error).message}`.slice(0, 160));
+    }
   }
   ingestList(c.wsb, threadId || "none", "daily", comments, ts);
   const hits = threadId ? snapshotTickers(c.wsb, ts) : [];
@@ -505,14 +560,22 @@ export async function collectOtherSubs(): Promise<SocialRun> {
   const groups: TickerHit[][] = [];
   for (const sub of c.subs) {
     try {
-      const hot = await fetchHot(sub, 12);
-      const posts = hot.filter((p) => !p.stickied).slice(0, c.hotPostsPerSub);
-      for (const p of posts) {
-        if (!p.id) continue;
-        const comments = await fetchComments(sub, p.id, c.commentsPerPost, "new");
-        nComments += comments.length;
-        ingestList(sub, p.id, "post", comments, ts);
+      let n = 0;
+      try {
+        const hot = await fetchHot(sub, 12);
+        const posts = hot.filter((p) => !p.stickied).slice(0, c.hotPostsPerSub);
+        for (const p of posts) {
+          if (!p.id) continue;
+          const comments = await fetchComments(sub, p.id, c.commentsPerPost, "new");
+          n += comments.length;
+          ingestList(sub, p.id, "post", comments, ts);
+        }
+      } catch {
+        const comments = await fetchArchiveComments(sub, c.commentsPerPost * c.hotPostsPerSub);
+        n = comments.length;
+        ingestList(sub, "archive", "post", comments, ts);
       }
+      nComments += n;
       groups.push(snapshotTickers(sub, ts));
     } catch (e) {
       errors.push(`${sub}: ${(e as Error).message}`.slice(0, 120));
