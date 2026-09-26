@@ -248,10 +248,14 @@ export function publishSocial(run: SocialRun) {
     comments: run.comments,
     emerging: run.emerging,
     staples: run.staples,
+    tickers: run.tickers,
+    quotes: run.quotes,
+    sentiment: run.sentiment,
     errors: run.errors,
   };
   const key = run.source === "wsb_daily" ? "reddit_wsb" : "reddit_subs";
-  pub(`${PREFIX}/sensor/${key}`, `${run.comments} cmt · ${run.emerging.length} emerging`);
+  const sent = run.sentiment;
+  pub(`${PREFIX}/sensor/${key}`, `${run.comments} cmt · ${run.emerging.length} em · B${sent.bull}/R${sent.bear}`);
   pub(`${PREFIX}/sensor/${key}_attr`, attr);
   pub(`${PREFIX}/sensor/reddit_emerging`, top);
   pub(`${PREFIX}/sensor/reddit_emerging_attr`, {

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { db, nowIso, readJsonFile } from "./db.ts";
-import { extractCashtags, isMegaCap } from "./entities.ts";
+import { extractCashtags, isMegaCap, lexiconPolarity } from "./entities.ts";
 
 /**
  * Recolección social (G3): cuenta y guarda. No clasifica sarcasmo ni “inteligencia”.
@@ -35,12 +35,23 @@ export type TickerHit = {
   subs: string[];
 };
 
+export type CommentQuote = {
+  ticker: string;
+  body: string;
+  score: number;
+  flag: string;
+  sub: string;
+};
+
 export type SocialRun = {
   source: "wsb_daily" | "subs";
   comments: number;
   threadTitle: string | null;
   emerging: TickerHit[];
   staples: TickerHit[];
+  tickers: TickerHit[];
+  quotes: CommentQuote[];
+  sentiment: { bull: number; bear: number; unlabeled: number; note: string };
   errors: string[];
 };
 
@@ -328,6 +339,57 @@ function rankEmerging(hits: TickerHit[]): TickerHit[] {
     .slice(0, 12);
 }
 
+function boardFromDb(ts: string, subs: string[]): { tickers: TickerHit[]; quotes: CommentQuote[]; sentiment: SocialRun["sentiment"] } {
+  const placeholders = subs.map(() => "?").join(",");
+  const quoteRows = db
+    .prepare(
+      `SELECT c.id, c.body, c.score, c.cheap_flag, c.sub,
+              GROUP_CONCAT(t.ticker, ',') AS tickers
+       FROM reddit_comments c
+       LEFT JOIN reddit_comment_tickers t ON t.comment_id = c.id
+       WHERE c.captured_at = ? AND c.sub IN (${placeholders})
+         AND c.cheap_flag = 'ok' AND length(c.body) >= 40
+       GROUP BY c.id
+       ORDER BY c.score DESC
+       LIMIT 12`,
+    )
+    .all(ts, ...subs) as { id: string; body: string; score: number; cheap_flag: string; sub: string; tickers: string | null }[];
+
+  const quotes: CommentQuote[] = quoteRows.map((r) => ({
+    ticker: (r.tickers || "—").split(",")[0] || "—",
+    body: r.body.replace(/\s+/g, " ").slice(0, 280),
+    score: r.score,
+    flag: r.cheap_flag,
+    sub: r.sub,
+  }));
+
+  const polarRows = db
+    .prepare(
+      `SELECT body FROM reddit_comments
+       WHERE captured_at = ? AND sub IN (${placeholders}) AND cheap_flag = 'ok'`,
+    )
+    .all(ts, ...subs) as { body: string }[];
+  let bull = 0;
+  let bear = 0;
+  let unlabeled = 0;
+  for (const r of polarRows) {
+    const p = lexiconPolarity(r.body);
+    if (p > 0) bull++;
+    else if (p < 0) bear++;
+    else unlabeled++;
+  }
+  return {
+    tickers: [],
+    quotes,
+    sentiment: {
+      bull,
+      bear,
+      unlabeled,
+      note: "Léxico grosero (moon/puts). No detecta sarcasmo; el agente futuro lo sustituye.",
+    },
+  };
+}
+
 function prune() {
   const cut = new Date(Date.now() - 14 * 86400_000).toISOString();
   db.prepare("DELETE FROM reddit_comments WHERE captured_at < ?").run(cut);
@@ -390,6 +452,7 @@ export async function collectWsbDaily(): Promise<SocialRun> {
   const hits = threadId ? snapshotTickers(c.wsb, ts) : [];
   const insW = db.prepare("INSERT OR REPLACE INTO wsb_mentions (ticker, captured_at, count) VALUES (?, ?, ?)");
   for (const h of hits) insW.run(h.ticker, ts, h.comments);
+  const board = boardFromDb(ts, [c.wsb]);
   prune();
   return {
     source: "wsb_daily",
@@ -397,6 +460,9 @@ export async function collectWsbDaily(): Promise<SocialRun> {
     threadTitle,
     emerging: rankEmerging(hits),
     staples: hits.filter((h) => h.role === "staple").sort((a, b) => b.comments - a.comments).slice(0, 8),
+    tickers: [...hits].sort((a, b) => b.comments - a.comments).slice(0, 25),
+    quotes: board.quotes,
+    sentiment: board.sentiment,
     errors,
   };
 }
@@ -422,14 +488,18 @@ export async function collectOtherSubs(): Promise<SocialRun> {
       errors.push(`${sub}: ${(e as Error).message}`.slice(0, 120));
     }
   }
-  prune();
   const hits = mergeHits(groups);
+  const board = boardFromDb(ts, c.subs);
+  prune();
   return {
     source: "subs",
     comments: nComments,
     threadTitle: c.subs.join(", "),
     emerging: rankEmerging(hits),
     staples: hits.filter((h) => h.role === "staple").sort((a, b) => b.comments - a.comments).slice(0, 8),
+    tickers: [...hits].sort((a, b) => b.comments - a.comments).slice(0, 25),
+    quotes: board.quotes,
+    sentiment: board.sentiment,
     errors,
   };
 }

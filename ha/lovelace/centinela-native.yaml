@@ -1,13 +1,13 @@
 title: Centinela
 views:
-  - title: Radar
-    path: radar
+  - title: Resumen
+    path: resumen
     icon: mdi:radar
     cards:
       - type: markdown
         content: >
-          Dashboard **nativo** (sin HACS). Régimen, alerta WHY, tickers, ideas y tareas.
-          No es consejo financiero.
+          Radar local. No es consejo financiero. Las pestañas se irán llenando
+          con lo que Centinela vaya guardando.
 
       - type: entity
         entity: sensor.centinela_regime
@@ -31,20 +31,145 @@ views:
 
       - type: markdown
         content: |
-          ### Tickers
-          {% set ticks = state_attr('sensor.centinela_watchlist', 'tickers') or [] %}
-          {{ ticks | join(' · ') }}
+          ### Emergentes (último barrido)
+          {% set em = state_attr('sensor.centinela_reddit_emerging', 'tickers') or [] %}
+          {% if em | length == 0 %}Aún no hay pico vs media 7d. Corre **WSB daily** y **Reddit subs**.{% endif %}
+          {% for e in em %}
+          **{{ e.ticker }}** · {{ e.comments }} cmt · {{ e.subs | join(', ') }}
+          {% endfor %}
+
+      - type: markdown
+        content: |
+          WSB: {{ states('sensor.centinela_reddit_wsb') }}
+
+          Otros: {{ states('sensor.centinela_reddit_subs') }}
+
+      - type: markdown
+        content: |
+          ### Briefing
+          {{ state_attr('sensor.centinela_digest', 'text') or states('sensor.centinela_digest') }}
 
       - type: entities
-        title: Añadir ticker
+        title: Watchlist
         entities:
           - entity: text.centinela_nuevo_ticker
           - entity: button.centinela_add_ticker
 
       - type: markdown
         content: |
-          ### Ideas de mercado
+          {% set ticks = state_attr('sensor.centinela_watchlist', 'tickers') or [] %}
+          {{ ticks | join(' · ') }}
+
+      - type: entities
+        title: Tareas
+        entities:
+          - entity: sensor.centinela_job_reddit_rising
+          - entity: button.centinela_run_reddit_rising
+          - entity: sensor.centinela_job_reddit_subs
+          - entity: button.centinela_run_reddit_subs
+          - entity: sensor.centinela_job_macro_scan
+          - entity: button.centinela_run_macro_scan
+          - entity: sensor.centinela_job_quotes_poll
+          - entity: button.centinela_run_quotes_poll
+
+  - title: Reddit
+    path: reddit
+    icon: mdi:reddit
+    cards:
+      - type: markdown
+        content: |
+          ## r/wallstreetbets (daily)
+
+          {{ state_attr('sensor.centinela_reddit_wsb', 'thread') or 'Sin hilo aún. Run WSB daily.' }}
+
+          {% set s = state_attr('sensor.centinela_reddit_wsb', 'sentiment') or {} %}
+          Léxico (no sarcasmo): **{{ s.bull | default(0) }}** bull /
+          **{{ s.bear | default(0) }}** bear /
+          {{ s.unlabeled | default(0) }} sin marca.
+
+          _{{ s.note | default('') }}_
+
+      - type: markdown
+        content: |
+          ### Tickers del barrido
+          {% set rows = state_attr('sensor.centinela_reddit_wsb', 'tickers') or [] %}
+          {% if rows | length == 0 %}Sin tabla. Corre la tarea **WSB daily**.{% else %}
+          | Ticker | Cmt | Únicos | Rol | vs 7d |
+          | --- | ---: | ---: | --- | ---: |
+          {% for t in rows %}
+          | {{ t.ticker }} | {{ t.comments }} | {{ t.variants }} | {{ t.role }} | {% if t.ratio7d %}{{ t.ratio7d | round(1) }}×{% else %}—{% endif %} |
+          {% endfor %}
+          {% endif %}
+
+      - type: markdown
+        content: |
+          ### Comentarios retenidos (filtro barato, no “joyas”)
+          {% set qs = state_attr('sensor.centinela_reddit_wsb', 'quotes') or [] %}
+          {% if qs | length == 0 %}Nada con flag ok y texto largo.{% endif %}
+          {% for q in qs %}
+          **{{ q.ticker }}** · score {{ q.score }}
+
+          {{ q.body }}
+
+          {% endfor %}
+
+      - type: entities
+        entities:
+          - entity: sensor.centinela_job_reddit_rising
+          - entity: button.centinela_run_reddit_rising
+
+      - type: markdown
+        content: |
+          ---
+
+          ## Otros subs
+
+          {{ state_attr('sensor.centinela_reddit_subs', 'thread') or 'stocks, pennystocks, investing…' }}
+
+          {% set s = state_attr('sensor.centinela_reddit_subs', 'sentiment') or {} %}
+          Léxico (no sarcasmo): **{{ s.bull | default(0) }}** bull /
+          **{{ s.bear | default(0) }}** bear /
+          {{ s.unlabeled | default(0) }} sin marca.
+
+      - type: markdown
+        content: |
+          ### Tickers del barrido
+          {% set rows = state_attr('sensor.centinela_reddit_subs', 'tickers') or [] %}
+          {% if rows | length == 0 %}Sin tabla. Corre **Reddit subs**.{% else %}
+          | Ticker | Cmt | Únicos | Rol | Subs | vs 7d |
+          | --- | ---: | ---: | --- | --- | ---: |
+          {% for t in rows %}
+          | {{ t.ticker }} | {{ t.comments }} | {{ t.variants }} | {{ t.role }} | {{ t.subs | join(', ') }} | {% if t.ratio7d %}{{ t.ratio7d | round(1) }}×{% else %}—{% endif %} |
+          {% endfor %}
+          {% endif %}
+
+      - type: markdown
+        content: |
+          ### Comentarios retenidos
+          {% set qs = state_attr('sensor.centinela_reddit_subs', 'quotes') or [] %}
+          {% if qs | length == 0 %}Nada con flag ok y texto largo.{% endif %}
+          {% for q in qs %}
+          **{{ q.ticker }}** · r/{{ q.sub }} · score {{ q.score }}
+
+          {{ q.body }}
+
+          {% endfor %}
+
+      - type: entities
+        entities:
+          - entity: sensor.centinela_job_reddit_subs
+          - entity: button.centinela_run_reddit_subs
+
+  - title: Ideas
+    path: ideas
+    icon: mdi:lightbulb-outline
+    cards:
+      - type: markdown
+        content: |
+          Hipótesis que tú cargas. Centinela las irá contrastando con el tiempo.
+
           {% set ideas = state_attr('sensor.centinela_ideas', 'ideas') or [] %}
+          {% if ideas | length == 0 %}Aún no hay ideas.{% endif %}
           {% for i in ideas %}
           **{{ i.title }}** — `{{ i.verdict }}`
 
@@ -58,37 +183,3 @@ views:
           - entity: text.centinela_idea_claim
           - entity: select.centinela_idea_factor
           - entity: button.centinela_add_idea
-
-      - type: entities
-        title: Tareas (Run now = botón)
-        entities:
-          - entity: sensor.centinela_job_macro_scan
-          - entity: button.centinela_run_macro_scan
-          - entity: sensor.centinela_job_ticker_events
-          - entity: button.centinela_run_ticker_events
-          - entity: sensor.centinela_job_market_sentiment
-          - entity: button.centinela_run_market_sentiment
-          - entity: sensor.centinela_job_volume_unusual
-          - entity: button.centinela_run_volume_unusual
-          - entity: sensor.centinela_job_reddit_rising
-          - entity: button.centinela_run_reddit_rising
-          - entity: sensor.centinela_job_reddit_subs
-          - entity: button.centinela_run_reddit_subs
-          - entity: sensor.centinela_job_ideas_eval
-          - entity: button.centinela_run_ideas_eval
-
-      - type: markdown
-        content: |
-          ### Reddit emergentes
-          {% set em = state_attr('sensor.centinela_reddit_emerging', 'tickers') or [] %}
-          {% if em | length == 0 %}Sin pico vs su propia media 7d (NVDA/SPY no cuentan).{% endif %}
-          {% for e in em %}
-          **{{ e.ticker }}** · {{ e.comments }} cmt · {{ e.subs | join(', ') }}{% if e.ratio7d %} · ×{{ e.ratio7d | round(1) }}{% endif %}
-
-          {% endfor %}
-          {{ states('sensor.centinela_reddit_wsb') }} · {{ states('sensor.centinela_reddit_subs') }}
-
-      - type: markdown
-        content: |
-          ### Briefing
-          {{ state_attr('sensor.centinela_digest', 'text') or states('sensor.centinela_digest') }}
