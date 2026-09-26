@@ -48,6 +48,7 @@ export type SocialRun = {
   comments: number;
   threadTitle: string | null;
   emerging: TickerHit[];
+  emergingBySub: { sub: string; tickers: TickerHit[] }[];
   staples: TickerHit[];
   tickers: TickerHit[];
   quotes: CommentQuote[];
@@ -100,7 +101,20 @@ const STOP = new Set(
     .filter(Boolean),
 );
 
-let lastFetch = 0;
+let aliasCache: Record<string, string[]> | null = null;
+
+function tickerAliases(): Record<string, string[]> {
+  if (!aliasCache) aliasCache = readJsonFile<Record<string, string[]>>("ticker-aliases.json");
+  return aliasCache;
+}
+
+function hasAlias(text: string, names: string[]): boolean {
+  const n = text.toLowerCase();
+  return names.some((name) => {
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`\\b${esc}\\b`, "i").test(n);
+  });
+}
 
 function cfg(): RedditSubConfig {
   return readJsonFile<RedditSubConfig>("reddit-subs.json");
@@ -182,9 +196,12 @@ function bodyKey(body: string) {
 export function extractSocialTickers(text: string): string[] {
   const found = new Set<string>();
   for (const s of extractCashtags(text)) {
-    if (s.length >= 2 && s.length <= 5) found.add(s);
+    if (s.length >= 1 && s.length <= 5) found.add(s);
   }
-  for (const m of text.toUpperCase().matchAll(/\b[A-Z]{2,5}\b/g)) {
+  for (const [sym, names] of Object.entries(tickerAliases())) {
+    if (hasAlias(text, names)) found.add(sym.toUpperCase());
+  }
+  for (const m of text.matchAll(/\b[A-Z]{2,5}\b/g)) {
     const s = m[0];
     if (STOP.has(s)) continue;
     found.add(s);
@@ -415,6 +432,19 @@ function rankEmerging(hits: TickerHit[]): TickerHit[] {
     .slice(0, 12);
 }
 
+function emergingBlocks(groups: { sub: string; hits: TickerHit[] }[]): { sub: string; tickers: TickerHit[] }[] {
+  return groups
+    .map((g) => ({ sub: g.sub, tickers: rankEmerging(g.hits) }))
+    .filter((b) => b.tickers.length > 0);
+}
+  return hits
+    .filter((h) => h.role === "emerging")
+    .filter((h) => h.variants >= 2 && h.comments >= 3)
+    .filter((h) => (h.ratio7d ?? 0) >= 3 || (h.ratio7d === 99 && h.comments >= 4))
+    .sort((a, b) => b.comments - a.comments || (b.ratio7d ?? 0) - (a.ratio7d ?? 0))
+    .slice(0, 12);
+}
+
 function boardFromDb(ts: string, subs: string[]): { tickers: TickerHit[]; quotes: CommentQuote[]; sentiment: SocialRun["sentiment"] } {
   const placeholders = subs.map(() => "?").join(",");
   const quoteRows = db
@@ -539,13 +569,15 @@ export async function collectWsbDaily(): Promise<SocialRun> {
   for (const h of hits) insW.run(h.ticker, ts, h.comments);
   const board = boardFromDb(ts, [c.wsb]);
   prune();
+  const em = rankEmerging(hits);
   return {
     source: "wsb_daily",
     comments: comments.length,
     threadTitle,
-    emerging: rankEmerging(hits),
+    emerging: em,
+    emergingBySub: emergingBlocks([{ sub: c.wsb, hits }]),
     staples: hits.filter((h) => h.role === "staple").sort((a, b) => b.comments - a.comments).slice(0, 8),
-    tickers: [...hits].sort((a, b) => b.comments - a.comments).slice(0, 25),
+    tickers: em,
     quotes: board.quotes,
     sentiment: board.sentiment,
     errors,
@@ -557,7 +589,7 @@ export async function collectOtherSubs(): Promise<SocialRun> {
   const errors: string[] = [];
   const ts = nowIso();
   let nComments = 0;
-  const groups: TickerHit[][] = [];
+  const perSub: { sub: string; hits: TickerHit[] }[] = [];
   for (const sub of c.subs) {
     try {
       let n = 0;
@@ -576,21 +608,23 @@ export async function collectOtherSubs(): Promise<SocialRun> {
         ingestList(sub, "archive", "post", comments, ts);
       }
       nComments += n;
-      groups.push(snapshotTickers(sub, ts));
+      perSub.push({ sub, hits: snapshotTickers(sub, ts) });
     } catch (e) {
       errors.push(`${sub}: ${(e as Error).message}`.slice(0, 120));
     }
   }
-  const hits = mergeHits(groups);
+  const hits = mergeHits(perSub.map((p) => p.hits));
   const board = boardFromDb(ts, c.subs);
   prune();
+  const bySub = emergingBlocks(perSub);
   return {
     source: "subs",
     comments: nComments,
     threadTitle: c.subs.join(", "),
     emerging: rankEmerging(hits),
-    staples: hits.filter((h) => h.role === "staple").sort((a, b) => b.comments - a.comments).slice(0, 8),
-    tickers: [...hits].sort((a, b) => b.comments - a.comments).slice(0, 25),
+    emergingBySub: bySub,
+    staples: [],
+    tickers: bySub.flatMap((b) => b.tickers),
     quotes: board.quotes,
     sentiment: board.sentiment,
     errors,

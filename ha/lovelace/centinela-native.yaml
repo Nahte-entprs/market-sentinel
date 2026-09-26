@@ -30,11 +30,17 @@ views:
 
       - type: markdown
         content: |
-          ### Emergentes (último barrido)
-          {% set em = state_attr('sensor.centinela_reddit_emerging', 'tickers') or [] %}
-          {% if em | length == 0 %}Aún no hay pico vs media 7d. Corre WSB daily y Reddit subs.{% endif %}
-          {% for e in em %}
-          **{{ e.ticker }}** · {{ e.comments }} cmt · {{ e.subs | join(', ') }}
+          ### Emergentes (solo tickers, por sub)
+          {% set a = state_attr('sensor.centinela_reddit_wsb', 'emerging_by_sub') or [] %}
+          {% set b = state_attr('sensor.centinela_reddit_subs', 'emerging_by_sub') or [] %}
+          {% set blocks = a + b %}
+          {% if blocks | length == 0 %}Sin emergentes aún. Corre WSB daily / Reddit subs.{% endif %}
+          {% for b in blocks %}
+          **r/{{ b.sub }}**
+          {% for t in b.tickers %}
+          `{{ t.ticker }}` · {{ t.comments }} cmt{% if t.ratio7d %} · ×{{ t.ratio7d | round(1) }}{% endif %}
+          {% endfor %}
+
           {% endfor %}
 
       - type: markdown
@@ -90,15 +96,15 @@ views:
 
       - type: markdown
         content: |
-          ### Tickers del barrido
-          {% set rows = state_attr('sensor.centinela_reddit_wsb', 'tickers') or [] %}
-          {% if rows | length == 0 %}Sin tabla. Corre la tarea WSB daily.{% else %}
-          | Ticker | Cmt | Únicos | Rol | vs 7d |
-          | --- | ---: | ---: | --- | ---: |
-          {% for t in rows %}
-          | {{ t.ticker }} | {{ t.comments }} | {{ t.variants }} | {{ t.role }} | {% if t.ratio7d %}{{ t.ratio7d | round(1) }}×{% else %}—{% endif %} |
+          ### Emergentes (solo tickers)
+          {% set blocks = state_attr('sensor.centinela_reddit_wsb', 'emerging_by_sub') or [] %}
+          {% if blocks | length == 0 %}Ningún ticker en pico en este sub.{% endif %}
+          {% for b in blocks %}
+          **r/{{ b.sub }}**
+          {% for t in b.tickers %}
+          `{{ t.ticker }}` · {{ t.comments }} cmt · {{ t.variants }} únicos{% if t.ratio7d %} · ×{{ t.ratio7d | round(1) }}{% endif %}
           {% endfor %}
-          {% endif %}
+          {% endfor %}
 
       - type: markdown
         content: |
@@ -132,15 +138,16 @@ views:
 
       - type: markdown
         content: |
-          ### Tickers del barrido
-          {% set rows = state_attr('sensor.centinela_reddit_subs', 'tickers') or [] %}
-          {% if rows | length == 0 %}Sin tabla. Corre Reddit subs.{% else %}
-          | Ticker | Cmt | Únicos | Rol | Subs | vs 7d |
-          | --- | ---: | ---: | --- | --- | ---: |
-          {% for t in rows %}
-          | {{ t.ticker }} | {{ t.comments }} | {{ t.variants }} | {{ t.role }} | {{ t.subs | join(', ') }} | {% if t.ratio7d %}{{ t.ratio7d | round(1) }}×{% else %}—{% endif %} |
+          ### Emergentes por subreddit (solo tickers)
+          {% set blocks = state_attr('sensor.centinela_reddit_subs', 'emerging_by_sub') or [] %}
+          {% if blocks | length == 0 %}Ningún ticker en pico en estos subs.{% endif %}
+          {% for b in blocks %}
+          **r/{{ b.sub }}**
+          {% for t in b.tickers %}
+          `{{ t.ticker }}` · {{ t.comments }} cmt · {{ t.variants }} únicos{% if t.ratio7d %} · ×{{ t.ratio7d | round(1) }}{% endif %}
           {% endfor %}
-          {% endif %}
+
+          {% endfor %}
 
       - type: markdown
         content: |

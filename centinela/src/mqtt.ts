@@ -247,6 +247,7 @@ export function publishSocial(run: SocialRun) {
     thread: run.threadTitle,
     comments: run.comments,
     emerging: run.emerging,
+    emerging_by_sub: run.emergingBySub,
     staples: run.staples,
     tickers: run.tickers,
     quotes: run.quotes,
@@ -260,7 +261,7 @@ export function publishSocial(run: SocialRun) {
   pub(`${PREFIX}/sensor/reddit_emerging`, top);
   pub(`${PREFIX}/sensor/reddit_emerging_attr`, {
     tickers: run.emerging,
-    staples: run.staples,
+    by_sub: run.emergingBySub,
     source: run.source,
   });
 }
