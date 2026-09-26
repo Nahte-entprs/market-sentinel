@@ -27,23 +27,25 @@ function extractCashtags(text: string): string[] {
 }
 
 function readData<T>(rel: string): T {
-  return JSON.parse(fs.readFileSync(path.join(ROOT, "data", rel), "utf8")) as T;
+  const p = path.join(ROOT, "data", rel);
+  if (!fs.existsSync(p)) throw new Error(`falta ${rel} en el add-on`);
+  return JSON.parse(fs.readFileSync(p, "utf8")) as T;
 }
 
 function load() {
   if (listed) return;
   const file = readData<UniverseFile>("ticker-universe.json");
   listed = new Set();
-  for (const raw of file.us) {
+  for (const raw of file.us ?? []) {
     const s = String(raw).trim().toUpperCase();
     if (/^[A-Z]{1,5}$/.test(s)) listed.add(s);
   }
-  extra = new Set(file.extra.map((s) => s.trim().toUpperCase()));
+  extra = new Set((file.extra ?? []).map((s) => s.trim().toUpperCase()));
   extraBare = new Map();
   for (const ex of extra) {
     if (ex.startsWith("^")) extraBare.set(ex.slice(1), ex);
   }
-  for (const s of file.strict) ENGLISH.add(s.toUpperCase());
+  for (const s of file.strict ?? []) ENGLISH.add(s.toUpperCase());
 }
 
 function aliases(): Record<string, string[]> {

@@ -591,7 +591,9 @@ async function drain() {
         const note = await def.run();
         setJob(id, "ok", null, note);
       } catch (err) {
-        setJob(id, "error", (err as Error).message.slice(0, 240), null);
+        const msg = (err as Error).message.slice(0, 240);
+        console.error(`[job] ${id} error: ${msg}`);
+        setJob(id, "error", msg, null);
       }
       publishJob(jobInfo(def));
       running = null;

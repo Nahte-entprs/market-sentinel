@@ -563,6 +563,23 @@ function prune() {
   db.prepare("DELETE FROM reddit_comment_tickers WHERE comment_id NOT IN (SELECT id FROM reddit_comments)").run();
 }
 
+function columnNames(table: string): Set<string> {
+  return new Set((db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name));
+}
+
+function backfillNyDay() {
+  const rows = db.prepare("SELECT id, created_utc FROM reddit_comments WHERE ny_day IS NULL OR ny_day = ''").all() as {
+    id: string;
+    created_utc: string;
+  }[];
+  if (!rows.length) return;
+  const upd = db.prepare("UPDATE reddit_comments SET ny_day = ? WHERE id = ?");
+  const tx = db.transaction(() => {
+    for (const r of rows) upd.run(nyDayFromCreated(0, r.created_utc), r.id);
+  });
+  tx();
+}
+
 export function ensureRedditTables() {
   db.exec(`
 CREATE TABLE IF NOT EXISTS reddit_comments (
@@ -575,8 +592,7 @@ CREATE TABLE IF NOT EXISTS reddit_comments (
   created_utc TEXT NOT NULL,
   cheap_flag TEXT NOT NULL,
   body_key TEXT NOT NULL,
-  captured_at TEXT NOT NULL,
-  ny_day TEXT NOT NULL DEFAULT ''
+  captured_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS reddit_comment_tickers (
   comment_id TEXT NOT NULL,
@@ -592,13 +608,15 @@ CREATE TABLE IF NOT EXISTS reddit_ticker_snapshots (
   cheap_ok INTEGER NOT NULL,
   PRIMARY KEY (ticker, sub, captured_at)
 );
+`);
+  if (!columnNames("reddit_comments").has("ny_day")) {
+    db.exec("ALTER TABLE reddit_comments ADD COLUMN ny_day TEXT NOT NULL DEFAULT ''");
+  }
+  backfillNyDay();
+  db.exec(`
 CREATE INDEX IF NOT EXISTS idx_reddit_comments_ny_day ON reddit_comments(ny_day);
 CREATE INDEX IF NOT EXISTS idx_reddit_comments_created ON reddit_comments(created_utc);
 `);
-  const cols = db.prepare("PRAGMA table_info(reddit_comments)").all() as { name: string }[];
-  if (!cols.some((c) => c.name === "ny_day")) {
-    db.exec("ALTER TABLE reddit_comments ADD COLUMN ny_day TEXT NOT NULL DEFAULT ''");
-  }
 }
 
 export async function collectWsbDaily(): Promise<SocialRun> {
