@@ -147,7 +147,8 @@ CREATE TABLE IF NOT EXISTS reddit_comments (
   created_utc TEXT NOT NULL,
   cheap_flag TEXT NOT NULL,
   body_key TEXT NOT NULL,
-  captured_at TEXT NOT NULL
+  captured_at TEXT NOT NULL,
+  ny_day TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS reddit_comment_tickers (
   comment_id TEXT NOT NULL,

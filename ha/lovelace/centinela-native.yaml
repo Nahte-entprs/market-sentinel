@@ -30,7 +30,7 @@ views:
 
       - type: markdown
         content: |
-          ### Emergentes (solo tickers, por sub)
+          ### Emergentes (tickers listados, por sub)
           {% set a = state_attr('sensor.centinela_reddit_wsb', 'emerging_by_sub') or [] %}
           {% set b = state_attr('sensor.centinela_reddit_subs', 'emerging_by_sub') or [] %}
           {% set blocks = a + b %}
@@ -87,18 +87,28 @@ views:
 
           {{ state_attr('sensor.centinela_reddit_wsb', 'thread') or 'Sin hilo aún. Run WSB daily.' }}
 
-          {% set s = state_attr('sensor.centinela_reddit_wsb', 'sentiment') or {} %}
-          Léxico (no sarcasmo): **{{ s.bull | default(0) }}** bull /
-          **{{ s.bear | default(0) }}** bear /
-          {{ s.unlabeled | default(0) }} sin marca.
+          {% set kind = state_attr('sensor.centinela_reddit_wsb', 'thread_kind') %}
+          Hilo: **{{ kind or 'unknown' }}**
+          _{% set sch = state_attr('sensor.centinela_reddit_wsb', 'schedule') %}{{ sch or '' }}_
 
-          _{{ s.note | default('') }}_
+          {% set s = state_attr('sensor.centinela_reddit_wsb', 'sentiment') or {} %}
+          ### Clima del hilo
+          Palabras sueltas, no sarcasmo. El modelo futuro lo sustituye.
+
+          Alcista {{ s.pct_bull | default(0) }}% `{{ s.bar_bull | default('') }}` ({{ s.bull | default(0) }})
+
+          Bajista {{ s.pct_bear | default(0) }}% `{{ s.bar_bear | default('') }}` ({{ s.bear | default(0) }})
+
+          Neutro {{ s.pct_flat | default(0) }}% `{{ s.bar_flat | default('') }}` ({{ s.unlabeled | default(0) }})
+
+          {% set st = state_attr('sensor.centinela_reddit_wsb', 'storage') or {} %}
+          Archivo: {{ st.comments | default(0) }} comentarios · {{ st.keepDays | default(31) }} días{% if st.oldestNyDay %} · desde {{ st.oldestNyDay }}{% endif %}
 
       - type: markdown
         content: |
-          ### Emergentes (solo tickers)
+          ### Emergentes (solo tickers listados)
           {% set blocks = state_attr('sensor.centinela_reddit_wsb', 'emerging_by_sub') or [] %}
-          {% if blocks | length == 0 %}Ningún ticker en pico en este sub.{% endif %}
+          {% if blocks | length == 0 %}Ningún ticker NASDAQ/NYSE/extra en pico en este sub.{% endif %}
           {% for b in blocks %}
           **r/{{ b.sub }}**
           {% for t in b.tickers %}
@@ -132,15 +142,18 @@ views:
           {{ state_attr('sensor.centinela_reddit_subs', 'thread') or 'stocks, pennystocks, investing…' }}
 
           {% set s = state_attr('sensor.centinela_reddit_subs', 'sentiment') or {} %}
-          Léxico (no sarcasmo): **{{ s.bull | default(0) }}** bull /
-          **{{ s.bear | default(0) }}** bear /
-          {{ s.unlabeled | default(0) }} sin marca.
+          ### Clima (otros subs)
+          Alcista {{ s.pct_bull | default(0) }}% `{{ s.bar_bull | default('') }}` ({{ s.bull | default(0) }})
+
+          Bajista {{ s.pct_bear | default(0) }}% `{{ s.bar_bear | default('') }}` ({{ s.bear | default(0) }})
+
+          Neutro {{ s.pct_flat | default(0) }}% `{{ s.bar_flat | default('') }}` ({{ s.unlabeled | default(0) }})
 
       - type: markdown
         content: |
-          ### Emergentes por subreddit (solo tickers)
+          ### Emergentes por subreddit (tickers listados)
           {% set blocks = state_attr('sensor.centinela_reddit_subs', 'emerging_by_sub') or [] %}
-          {% if blocks | length == 0 %}Ningún ticker en pico en estos subs.{% endif %}
+          {% if blocks | length == 0 %}Ningún ticker NASDAQ/NYSE/extra en pico en estos subs.{% endif %}
           {% for b in blocks %}
           **r/{{ b.sub }}**
           {% for t in b.tickers %}

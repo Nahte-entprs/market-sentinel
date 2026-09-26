@@ -130,7 +130,7 @@ function publishDiscovery() {
     name: "Nuevo ticker",
     command_topic: `${PREFIX}/cmd/ticker_draft`,
     state_topic: `${PREFIX}/text/nuevo_ticker`,
-    max: 8,
+    max: 16,
     mode: "text",
   });
   disc("text", "idea_titulo", {
@@ -245,6 +245,8 @@ export function publishSocial(run: SocialRun) {
   const attr = {
     source: run.source,
     thread: run.threadTitle,
+    thread_kind: run.threadKind,
+    schedule: run.schedule,
     comments: run.comments,
     emerging: run.emerging,
     emerging_by_sub: run.emergingBySub,
@@ -252,6 +254,7 @@ export function publishSocial(run: SocialRun) {
     tickers: run.tickers,
     quotes: run.quotes,
     sentiment: run.sentiment,
+    storage: run.storage,
     errors: run.errors,
   };
   const key = run.source === "wsb_daily" ? "reddit_wsb" : "reddit_subs";

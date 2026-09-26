@@ -3,5 +3,12 @@
   "ON": ["onsemi", "on semiconductor", "on semi"],
   "SO": ["southern company"],
   "IT": ["gartner"],
-  "OPEN": ["opendoor"]
+  "OPEN": ["opendoor"],
+  "CL=F": ["crude oil", "wti crude", "oil futures"],
+  "BZ=F": ["brent crude", "brent"],
+  "GC=F": ["gold futures", "spot gold"],
+  "NG=F": ["natural gas futures", "henry hub"],
+  "^TNX": ["10 year yield", "10-year yield", "ten year yield", "tnx"],
+  "^VIX": ["vix", "fear index"],
+  "005930.KS": ["samsung electronics", "samsung"]
 }

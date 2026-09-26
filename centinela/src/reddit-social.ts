@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { db, nowIso, readJsonFile } from "./db.ts";
-import { extractCashtags, isMegaCap, lexiconPolarity } from "./entities.ts";
+import { isMegaCap, lexiconPolarity } from "./entities.ts";
+import { extractSocialTickers, pickCommentTicker } from "./ticker-filter.ts";
+import { MARKET_TZ } from "./config.ts";
 
 /**
  * Recolección social (G3): cuenta y guarda. No clasifica sarcasmo ni “inteligencia”.
@@ -47,12 +49,26 @@ export type SocialRun = {
   source: "wsb_daily" | "subs";
   comments: number;
   threadTitle: string | null;
+  threadKind: "daily" | "weekend" | "unknown";
+  schedule: string;
   emerging: TickerHit[];
   emergingBySub: { sub: string; tickers: TickerHit[] }[];
   staples: TickerHit[];
   tickers: TickerHit[];
   quotes: CommentQuote[];
-  sentiment: { bull: number; bear: number; unlabeled: number; note: string };
+  sentiment: {
+    bull: number;
+    bear: number;
+    unlabeled: number;
+    pct_bull: number;
+    pct_bear: number;
+    pct_flat: number;
+    bar_bull: string;
+    bar_bear: string;
+    bar_flat: string;
+    note: string;
+  };
+  storage: { keepDays: number; comments: number; oldestNyDay: string | null };
   errors: string[];
 };
 
@@ -95,25 +111,87 @@ const ALWAYS_ON = new Set([
   "AMC",
 ]);
 
-const STOP = new Set(
-  `THE AND FOR ARE BUT NOT YOU ALL CAN HER WAS ONE OUR OUT DAY GET HAS HIM HIS HOW ITS MAY NEW NOW OLD SEE TWO WAY WHO BOY DID LET PUT SAY SHE TOO USE CEO IPO ETF SEC FED GDP ATH IMO NFA EOD PTA YOLO HOLD HODL THIS THAT JUST FROM WITH YOUR HAVE WILL BEAT MISS CALL PUTS CALLS MOON TEND WSB DD AI USA USD OTC RN EDIT OP OK LOL OMG WTF RIP ASAP IIRC TBH FOMO RSI MACD EPS PE AM IS TO IN ON OF AT BY AS OR IF IT WE HE SO NO UP GOOD BEST SELL BUY LONG SHORT BULL BEAR PUMP DUMP NEXT WEEK OVER INTO THEY THEM WHAT WHEN THEN THAN ALSO VERY MUCH MORE MOST SOME ANY`
-    .split(/\s+/)
-    .filter(Boolean),
-);
+export const COMMENT_KEEP_DAYS = 31;
 
-let aliasCache: Record<string, string[]> | null = null;
+export const WSB_SCHEDULE =
+  "Lun–vie: Daily Discussion ~6:00 AM ET (premarket, ~10:00 UTC). Viernes ~16:00 ET: Weekend Discussion. Sáb–dom permanece el weekend hasta el daily del lunes.";
 
-function tickerAliases(): Record<string, string[]> {
-  if (!aliasCache) aliasCache = readJsonFile<Record<string, string[]>>("ticker-aliases.json");
-  return aliasCache;
+let lastFetch = 0;
+
+function nyParts(d = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: MARKET_TZ,
+    weekday: "short",
+    hour: "2-digit",
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return {
+    weekday: get("weekday"),
+    hour: Number(get("hour")),
+    day: `${get("year")}-${get("month")}-${get("day")}`,
+  };
 }
 
-function hasAlias(text: string, names: string[]): boolean {
-  const n = text.toLowerCase();
-  return names.some((name) => {
-    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`\\b${esc}\\b`, "i").test(n);
-  });
+function nyDayFromCreated(createdUnix: number, fallbackIso: string): string {
+  if (createdUnix > 0) return nyParts(new Date(createdUnix * 1000)).day;
+  const t = Date.parse(fallbackIso);
+  return nyParts(Number.isFinite(t) ? new Date(t) : new Date()).day;
+}
+
+function threadKindOf(title: string | null): SocialRun["threadKind"] {
+  const t = (title ?? "").toLowerCase();
+  if (t.includes("weekend")) return "weekend";
+  if (t.includes("daily discussion")) return "daily";
+  return "unknown";
+}
+
+function preferWsbThread(
+  hot: { id?: string; title?: string; stickied?: boolean }[],
+  keys: string[],
+): { id?: string; title?: string; stickied?: boolean } | undefined {
+  const { weekday, hour } = nyParts();
+  const weekendWindow = weekday === "Sat" || weekday === "Sun" || (weekday === "Fri" && hour >= 16);
+  const want = weekendWindow ? "weekend discussion" : "daily discussion";
+  return (
+    hot.find((p) => (p.title ?? "").toLowerCase().includes(want)) ??
+    hot.find((p) => keys.some((k) => (p.title ?? "").toLowerCase().includes(k))) ??
+    hot.find((p) => p.stickied)
+  );
+}
+
+function meter(pct: number): string {
+  const n = Math.max(0, Math.min(10, Math.round(pct / 10)));
+  return `${"█".repeat(n)}${"░".repeat(10 - n)}`;
+}
+
+function sentimentBoard(bull: number, bear: number, unlabeled: number): SocialRun["sentiment"] {
+  const tot = Math.max(1, bull + bear + unlabeled);
+  const pct_bull = Math.round((bull / tot) * 100);
+  const pct_bear = Math.round((bear / tot) * 100);
+  const pct_flat = Math.max(0, 100 - pct_bull - pct_bear);
+  return {
+    bull,
+    bear,
+    unlabeled,
+    pct_bull,
+    pct_bear,
+    pct_flat,
+    bar_bull: meter(pct_bull),
+    bar_bear: meter(pct_bear),
+    bar_flat: meter(pct_flat),
+    note: "Conteo de palabras (moon, calls, puts, crash). No lee sarcasmo; el agente futuro lo sustituye.",
+  };
+}
+
+function storageStats(): SocialRun["storage"] {
+  const row = db
+    .prepare("SELECT COUNT(*) AS n, MIN(ny_day) AS oldest FROM reddit_comments")
+    .get() as { n: number; oldest: string | null };
+  return { keepDays: COMMENT_KEEP_DAYS, comments: row.n, oldestNyDay: row.oldest };
 }
 
 function cfg(): RedditSubConfig {
@@ -139,7 +217,7 @@ async function redditJson<T>(pathAndQuery: string): Promise<T> {
         `https://www.reddit.com${path.replace("/hot.json", "/hot/.json")}`,
       ];
   const agents = [
-    `Centinela/1.2.2 (HAOS; +https://github.com/Nahte-entprs/market-sentinel)`,
+    `Centinela/1.2.4 (HAOS; +https://github.com/Nahte-entprs/market-sentinel)`,
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
   ];
   let lastErr = "reddit: sin respuesta";
@@ -193,21 +271,7 @@ function bodyKey(body: string) {
     .slice(0, 16);
 }
 
-export function extractSocialTickers(text: string): string[] {
-  const found = new Set<string>();
-  for (const s of extractCashtags(text)) {
-    if (s.length >= 1 && s.length <= 5) found.add(s);
-  }
-  for (const [sym, names] of Object.entries(tickerAliases())) {
-    if (hasAlias(text, names)) found.add(sym.toUpperCase());
-  }
-  for (const m of text.matchAll(/\b[A-Z]{2,5}\b/g)) {
-    const s = m[0];
-    if (STOP.has(s)) continue;
-    found.add(s);
-  }
-  return [...found];
-}
+export { extractSocialTickers } from "./ticker-filter.ts";
 
 function roleOf(ticker: string): TickerHit["role"] {
   if (ALWAYS_ON.has(ticker) || isMegaCap(ticker)) return "staple";
@@ -268,7 +332,7 @@ async function fetchArchiveComments(sub: string, size: number): Promise<{ id: st
       const res = await fetch(url, {
         headers: {
           Accept: "application/json",
-          "User-Agent": "Centinela/1.2.2 (+https://github.com/Nahte-entprs/market-sentinel)",
+          "User-Agent": "Centinela/1.2.4 (+https://github.com/Nahte-entprs/market-sentinel)",
         },
         signal: AbortSignal.timeout(20000),
       });
@@ -306,25 +370,31 @@ function persistComment(row: {
   body: string;
   score: number;
   created: string;
+  nyDay: string;
   flag: CheapFlag;
   tickers: string[];
   capturedAt: string;
 }) {
   db.prepare(
-    `INSERT INTO reddit_comments (id, sub, thread_id, kind, body, score, created_utc, cheap_flag, body_key, captured_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET score=excluded.score, cheap_flag=excluded.cheap_flag, captured_at=excluded.captured_at, body=excluded.body`,
+    `INSERT INTO reddit_comments (id, sub, thread_id, kind, body, score, created_utc, cheap_flag, body_key, captured_at, ny_day)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       score=excluded.score,
+       cheap_flag=excluded.cheap_flag,
+       body=excluded.body,
+       ny_day=excluded.ny_day`,
   ).run(
     row.id,
     row.sub,
     row.threadId,
     row.kind,
-    row.body.slice(0, 500),
+    row.body.slice(0, 800),
     row.score,
     row.created,
     row.flag,
     bodyKey(row.body),
     row.capturedAt,
+    row.nyDay,
   );
   db.prepare("DELETE FROM reddit_comment_tickers WHERE comment_id = ?").run(row.id);
   const insT = db.prepare("INSERT OR IGNORE INTO reddit_comment_tickers (comment_id, ticker) VALUES (?, ?)");
@@ -397,6 +467,7 @@ function ingestList(
       body: c.body,
       score: c.score,
       created: c.created ? new Date(c.created * 1000).toISOString() : ts,
+      nyDay: nyDayFromCreated(c.created, ts),
       flag,
       tickers,
       capturedAt: ts,
@@ -437,22 +508,20 @@ function emergingBlocks(groups: { sub: string; hits: TickerHit[] }[]): { sub: st
     .map((g) => ({ sub: g.sub, tickers: rankEmerging(g.hits) }))
     .filter((b) => b.tickers.length > 0);
 }
-  return hits
-    .filter((h) => h.role === "emerging")
-    .filter((h) => h.variants >= 2 && h.comments >= 3)
-    .filter((h) => (h.ratio7d ?? 0) >= 3 || (h.ratio7d === 99 && h.comments >= 4))
-    .sort((a, b) => b.comments - a.comments || (b.ratio7d ?? 0) - (a.ratio7d ?? 0))
-    .slice(0, 12);
-}
 
-function boardFromDb(ts: string, subs: string[]): { tickers: TickerHit[]; quotes: CommentQuote[]; sentiment: SocialRun["sentiment"] } {
+function boardFromDb(
+  ts: string,
+  subs: string[],
+  preferTickers: string[],
+): { quotes: CommentQuote[]; sentiment: SocialRun["sentiment"] } {
   const placeholders = subs.map(() => "?").join(",");
+  const prefer = new Set(preferTickers);
   const quoteRows = db
     .prepare(
       `SELECT c.id, c.body, c.score, c.cheap_flag, c.sub,
               GROUP_CONCAT(t.ticker, ',') AS tickers
        FROM reddit_comments c
-       LEFT JOIN reddit_comment_tickers t ON t.comment_id = c.id
+       JOIN reddit_comment_tickers t ON t.comment_id = c.id
        WHERE c.captured_at = ? AND c.sub IN (${placeholders})
          AND c.cheap_flag = 'ok' AND length(c.body) >= 40
        GROUP BY c.id
@@ -462,7 +531,7 @@ function boardFromDb(ts: string, subs: string[]): { tickers: TickerHit[]; quotes
     .all(ts, ...subs) as { id: string; body: string; score: number; cheap_flag: string; sub: string; tickers: string | null }[];
 
   const quotes: CommentQuote[] = quoteRows.map((r) => ({
-    ticker: (r.tickers || "—").split(",")[0] || "—",
+    ticker: pickCommentTicker(r.tickers, prefer),
     body: r.body.replace(/\s+/g, " ").slice(0, 280),
     score: r.score,
     flag: r.cheap_flag,
@@ -484,22 +553,14 @@ function boardFromDb(ts: string, subs: string[]): { tickers: TickerHit[]; quotes
     else if (p < 0) bear++;
     else unlabeled++;
   }
-  return {
-    tickers: [],
-    quotes,
-    sentiment: {
-      bull,
-      bear,
-      unlabeled,
-      note: "Léxico grosero (moon/puts). No detecta sarcasmo; el agente futuro lo sustituye.",
-    },
-  };
+  return { quotes, sentiment: sentimentBoard(bull, bear, unlabeled) };
 }
 
 function prune() {
-  const cut = new Date(Date.now() - 14 * 86400_000).toISOString();
-  db.prepare("DELETE FROM reddit_comments WHERE captured_at < ?").run(cut);
+  const cut = new Date(Date.now() - COMMENT_KEEP_DAYS * 86400_000).toISOString();
+  db.prepare("DELETE FROM reddit_comments WHERE created_utc < ?").run(cut);
   db.prepare("DELETE FROM reddit_ticker_snapshots WHERE captured_at < ?").run(cut);
+  db.prepare("DELETE FROM reddit_comment_tickers WHERE comment_id NOT IN (SELECT id FROM reddit_comments)").run();
 }
 
 export function ensureRedditTables() {
@@ -514,7 +575,8 @@ CREATE TABLE IF NOT EXISTS reddit_comments (
   created_utc TEXT NOT NULL,
   cheap_flag TEXT NOT NULL,
   body_key TEXT NOT NULL,
-  captured_at TEXT NOT NULL
+  captured_at TEXT NOT NULL,
+  ny_day TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS reddit_comment_tickers (
   comment_id TEXT NOT NULL,
@@ -530,7 +592,13 @@ CREATE TABLE IF NOT EXISTS reddit_ticker_snapshots (
   cheap_ok INTEGER NOT NULL,
   PRIMARY KEY (ticker, sub, captured_at)
 );
+CREATE INDEX IF NOT EXISTS idx_reddit_comments_ny_day ON reddit_comments(ny_day);
+CREATE INDEX IF NOT EXISTS idx_reddit_comments_created ON reddit_comments(created_utc);
 `);
+  const cols = db.prepare("PRAGMA table_info(reddit_comments)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "ny_day")) {
+    db.exec("ALTER TABLE reddit_comments ADD COLUMN ny_day TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 export async function collectWsbDaily(): Promise<SocialRun> {
@@ -542,11 +610,7 @@ export async function collectWsbDaily(): Promise<SocialRun> {
   let threadId = "";
   try {
     const hot = await fetchHot(c.wsb, 20);
-    const daily =
-      hot.find((p) => {
-        const t = (p.title ?? "").toLowerCase();
-        return c.dailyTitleIncludes.some((k) => t.includes(k));
-      }) ?? hot.find((p) => p.stickied);
+    const daily = preferWsbThread(hot, c.dailyTitleIncludes);
     if (!daily?.id) throw new Error("no daily/weekend thread");
     threadId = daily.id;
     threadTitle = daily.title ?? null;
@@ -567,19 +631,26 @@ export async function collectWsbDaily(): Promise<SocialRun> {
   const hits = threadId ? snapshotTickers(c.wsb, ts) : [];
   const insW = db.prepare("INSERT OR REPLACE INTO wsb_mentions (ticker, captured_at, count) VALUES (?, ?, ?)");
   for (const h of hits) insW.run(h.ticker, ts, h.comments);
-  const board = boardFromDb(ts, [c.wsb]);
-  prune();
   const em = rankEmerging(hits);
+  const board = boardFromDb(
+    ts,
+    [c.wsb],
+    em.map((h) => h.ticker),
+  );
+  prune();
   return {
     source: "wsb_daily",
     comments: comments.length,
     threadTitle,
+    threadKind: threadKindOf(threadTitle),
+    schedule: WSB_SCHEDULE,
     emerging: em,
     emergingBySub: emergingBlocks([{ sub: c.wsb, hits }]),
     staples: hits.filter((h) => h.role === "staple").sort((a, b) => b.comments - a.comments).slice(0, 8),
     tickers: em,
     quotes: board.quotes,
     sentiment: board.sentiment,
+    storage: storageStats(),
     errors,
   };
 }
@@ -614,19 +685,27 @@ export async function collectOtherSubs(): Promise<SocialRun> {
     }
   }
   const hits = mergeHits(perSub.map((p) => p.hits));
-  const board = boardFromDb(ts, c.subs);
-  prune();
   const bySub = emergingBlocks(perSub);
+  const em = rankEmerging(hits);
+  const board = boardFromDb(
+    ts,
+    c.subs,
+    em.map((h) => h.ticker),
+  );
+  prune();
   return {
     source: "subs",
     comments: nComments,
     threadTitle: c.subs.join(", "),
-    emerging: rankEmerging(hits),
+    threadKind: "unknown",
+    schedule: WSB_SCHEDULE,
+    emerging: em,
     emergingBySub: bySub,
     staples: [],
     tickers: bySub.flatMap((b) => b.tickers),
     quotes: board.quotes,
     sentiment: board.sentiment,
+    storage: storageStats(),
     errors,
   };
 }
