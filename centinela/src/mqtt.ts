@@ -1,7 +1,17 @@
 import mqtt from "mqtt";
 import { config } from "./config.ts";
-import type { AlertRecord, IdeaRecord, JobInfo, Regime } from "./types.ts";
+import type { AlertRecord, CarteraPosition, IdeaRecord, JobInfo, Regime, TickerAlert } from "./types.ts";
 import type { SocialRun } from "./reddit-social.ts";
+
+export type MqttDrafts = {
+  ticker: string;
+  ideaTitle: string;
+  ideaClaim: string;
+  ideaFactor: string;
+  category: string;
+  investedUsd: number;
+  fairPrice: number;
+};
 
 type HaDevice = {
   identifiers: string[];
@@ -27,9 +37,14 @@ export function mqttEnabled() {
 
 export async function startMqtt(handlers: {
   onAddTicker: (s: string) => void;
+  onSaveTicker: () => void;
+  onRemoveTicker: () => void;
+  onMoveTicker: (dir: "up" | "down") => void;
+  onTickerDraft: (s: string) => void;
   onAddIdea: (title: string, claim: string, factor: string) => void;
   onRunJob: (id: string) => void;
-  drafts: { ticker: string; ideaTitle: string; ideaClaim: string; ideaFactor: string };
+  onReady?: () => void;
+  drafts: MqttDrafts;
 }) {
   if (!config.mqttUrl) {
     console.log("[mqtt] MQTT_URL vacío — modo local (preview / sin HA).");
@@ -47,14 +62,25 @@ export async function startMqtt(handlers: {
     publishDiscovery();
     client?.publish(`${PREFIX}/status`, "online", { retain: true });
     client?.subscribe(`${PREFIX}/cmd/#`);
+    handlers.onReady?.();
   });
   client.on("message", (topic, payload) => {
     const msg = payload.toString();
-    if (topic === `${PREFIX}/cmd/ticker_draft`) handlers.drafts.ticker = msg;
+    if (topic === `${PREFIX}/cmd/ticker_draft`) {
+      handlers.drafts.ticker = msg;
+      handlers.onTickerDraft(msg);
+    }
+    if (topic === `${PREFIX}/cmd/ticker_category`) handlers.drafts.category = msg;
+    if (topic === `${PREFIX}/cmd/ticker_invested`) handlers.drafts.investedUsd = Number(msg) || 0;
+    if (topic === `${PREFIX}/cmd/ticker_fair`) handlers.drafts.fairPrice = Number(msg) || 0;
     if (topic === `${PREFIX}/cmd/idea_title`) handlers.drafts.ideaTitle = msg;
     if (topic === `${PREFIX}/cmd/idea_claim`) handlers.drafts.ideaClaim = msg;
     if (topic === `${PREFIX}/cmd/idea_factor`) handlers.drafts.ideaFactor = msg;
     if (topic === `${PREFIX}/cmd/add_ticker`) handlers.onAddTicker(handlers.drafts.ticker || msg);
+    if (topic === `${PREFIX}/cmd/save_ticker`) handlers.onSaveTicker();
+    if (topic === `${PREFIX}/cmd/remove_ticker`) handlers.onRemoveTicker();
+    if (topic === `${PREFIX}/cmd/ticker_up`) handlers.onMoveTicker("up");
+    if (topic === `${PREFIX}/cmd/ticker_down`) handlers.onMoveTicker("down");
     if (topic === `${PREFIX}/cmd/add_idea`) {
       handlers.onAddIdea(handlers.drafts.ideaTitle, handlers.drafts.ideaClaim, handlers.drafts.ideaFactor || msg);
     }
@@ -102,6 +128,24 @@ function publishDiscovery() {
     json_attributes_topic: `${PREFIX}/sensor/watchlist_attr`,
     icon: "mdi:format-list-bulleted",
   });
+  disc("sensor", "holding", {
+    name: "Holding",
+    state_topic: `${PREFIX}/sensor/holding`,
+    json_attributes_topic: `${PREFIX}/sensor/holding_attr`,
+    icon: "mdi:briefcase-outline",
+  });
+  disc("sensor", "priority", {
+    name: "Priority",
+    state_topic: `${PREFIX}/sensor/priority`,
+    json_attributes_topic: `${PREFIX}/sensor/priority_attr`,
+    icon: "mdi:star-four-points",
+  });
+  disc("sensor", "watch", {
+    name: "Watch",
+    state_topic: `${PREFIX}/sensor/watch`,
+    json_attributes_topic: `${PREFIX}/sensor/watch_attr`,
+    icon: "mdi:eye-outline",
+  });
   disc("sensor", "ideas", {
     name: "Ideas de mercado",
     state_topic: `${PREFIX}/sensor/ideas`,
@@ -132,6 +176,55 @@ function publishDiscovery() {
     state_topic: `${PREFIX}/text/nuevo_ticker`,
     max: 16,
     mode: "text",
+  });
+  disc("select", "ticker_categoria", {
+    name: "Lista ticker",
+    command_topic: `${PREFIX}/cmd/ticker_category`,
+    state_topic: `${PREFIX}/select/ticker_categoria`,
+    options: ["holding", "priority", "watchlist"],
+    icon: "mdi:format-list-group",
+  });
+  disc("number", "invertido", {
+    name: "USD invertido",
+    command_topic: `${PREFIX}/cmd/ticker_invested`,
+    state_topic: `${PREFIX}/number/invertido`,
+    min: 0,
+    max: 10000000,
+    step: 50,
+    mode: "box",
+    unit_of_measurement: "USD",
+    icon: "mdi:cash",
+  });
+  disc("number", "fair_price", {
+    name: "Fair price",
+    command_topic: `${PREFIX}/cmd/ticker_fair`,
+    state_topic: `${PREFIX}/number/fair_price`,
+    min: 0,
+    max: 100000,
+    step: 0.01,
+    mode: "box",
+    unit_of_measurement: "USD",
+    icon: "mdi:scale-balance",
+  });
+  disc("button", "save_ticker", {
+    name: "Guardar ticker",
+    command_topic: `${PREFIX}/cmd/save_ticker`,
+    icon: "mdi:content-save",
+  });
+  disc("button", "remove_ticker", {
+    name: "Quitar ticker",
+    command_topic: `${PREFIX}/cmd/remove_ticker`,
+    icon: "mdi:minus",
+  });
+  disc("button", "ticker_up", {
+    name: "Subir ticker",
+    command_topic: `${PREFIX}/cmd/ticker_up`,
+    icon: "mdi:chevron-up",
+  });
+  disc("button", "ticker_down", {
+    name: "Bajar ticker",
+    command_topic: `${PREFIX}/cmd/ticker_down`,
+    icon: "mdi:chevron-down",
   });
   disc("text", "idea_titulo", {
     name: "Idea título",
@@ -181,6 +274,7 @@ function publishDiscovery() {
     "reddit.rising",
     "reddit.subs",
     "quotes.poll",
+    "fundamentals.poll",
     "ideas.eval",
     "digest.brief",
   ];
@@ -235,6 +329,23 @@ export function publishWatchlist(symbols: string[]) {
   pub(`${PREFIX}/sensor/watchlist_attr`, { tickers: symbols });
 }
 
+export function publishCartera(lists: {
+  holding: CarteraPosition[];
+  priority: CarteraPosition[];
+  watch: CarteraPosition[];
+}) {
+  pub(`${PREFIX}/sensor/holding`, String(lists.holding.length));
+  pub(`${PREFIX}/sensor/holding_attr`, { positions: lists.holding });
+  pub(`${PREFIX}/sensor/priority`, String(lists.priority.length));
+  pub(`${PREFIX}/sensor/priority_attr`, { positions: lists.priority });
+  pub(`${PREFIX}/sensor/watch`, String(lists.watch.length));
+  pub(`${PREFIX}/sensor/watch_attr`, { positions: lists.watch });
+}
+
+export function publishTickerAlert(alert: TickerAlert) {
+  pub(`${PREFIX}/ticker_alert`, alert, false);
+}
+
 export function publishIdeas(ideas: IdeaRecord[]) {
   pub(`${PREFIX}/sensor/ideas`, String(ideas.length));
   pub(`${PREFIX}/sensor/ideas_attr`, { ideas });
@@ -283,9 +394,12 @@ export function publishStatus(payload: Record<string, unknown>) {
   pub(`${PREFIX}/status`, { state: "online", ...payload, ts: new Date().toISOString() });
 }
 
-export function publishTextState(drafts: { ticker: string; ideaTitle: string; ideaClaim: string; ideaFactor: string }) {
+export function publishTextState(drafts: MqttDrafts) {
   pub(`${PREFIX}/text/nuevo_ticker`, drafts.ticker);
   pub(`${PREFIX}/text/idea_titulo`, drafts.ideaTitle);
   pub(`${PREFIX}/text/idea_claim`, drafts.ideaClaim);
   pub(`${PREFIX}/select/idea_factor`, drafts.ideaFactor || "iran");
+  pub(`${PREFIX}/select/ticker_categoria`, drafts.category || "watchlist");
+  pub(`${PREFIX}/number/invertido`, String(drafts.investedUsd ?? 0));
+  pub(`${PREFIX}/number/fair_price`, String(drafts.fairPrice ?? 0));
 }

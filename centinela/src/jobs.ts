@@ -1,15 +1,16 @@
 import { db, json, nowIso, parseJson, getSetting } from "./db.ts";
 import { isRth } from "./config.ts";
 import { listFactors, listIdeas, listTickers } from "./universe.ts";
-import { allQuoteSymbols, allQuotes, getQuote, refreshQuotes } from "./quotes.ts";
+import { allQuoteSymbols, allQuotes, getQuote, refreshQuotes, refreshFundamentals, threeDayTrend } from "./quotes.ts";
 import { ingestFeeds, recentNews } from "./news.ts";
 import { extractEntities, lexiconPolarity, matchThesis } from "./entities.ts";
 import { tickersFromEntities } from "./graph.ts";
 import { computeRegime, confidenceFrom, currentRegime, scoreThreshold } from "./regime.ts";
-import { emitIfNeeded, lastAlert, lastDigest, listAlerts, saveDigest } from "./alerts.ts";
+import { emitIfNeeded, lastAlert, lastDigest, listAlerts, maybePushTickerWatch, saveDigest } from "./alerts.ts";
 import { collectOtherSubs, collectWsbDaily, ensureRedditTables } from "./reddit-social.ts";
-import { publishIdeas, publishJob, publishRegime, publishSocial, publishStatus, publishWatchlist } from "./mqtt.ts";
-import type { Candidate, IdeaRecord, JobInfo, JobStatus, WhyItem } from "./types.ts";
+import { publishIdeas, publishJob, publishRegime, publishSocial, publishStatus } from "./mqtt.ts";
+import { listPositions, publishCarteraState } from "./portfolio.ts";
+import type { Candidate, IdeaRecord, JobInfo, JobStatus, TickerCategory, WhyItem } from "./types.ts";
 
 type JobDef = {
   id: string;
@@ -51,9 +52,23 @@ function jobInfo(def: JobDef): JobInfo {
 
 async function quotesJob() {
   const r = await refreshQuotes(allQuoteSymbols());
+  publishCarteraState();
   if (r.errors.length && r.ok === 0) throw new Error(r.errors[0]);
   return `${r.ok} cotizaciones` + (r.errors.length ? ` (${r.errors.length} errores)` : "");
 }
+
+async function fundamentalsJob() {
+  const r = await refreshFundamentals(listTickers("ticker").map((t) => t.symbol));
+  publishCarteraState();
+  if (r.errors.length && r.ok === 0) throw new Error(r.errors[0]);
+  return `${r.ok} fundamentals` + (r.errors.length ? ` (${r.errors.length} errores)` : "");
+}
+
+const TICKER_WATCH: Record<TickerCategory, { changePct: number; volumeRatio: number; trendPct: number }> = {
+  holding: { changePct: 2, volumeRatio: 2, trendPct: 4 },
+  priority: { changePct: 2, volumeRatio: 2, trendPct: 5 },
+  watchlist: { changePct: 3.5, volumeRatio: 2.5, trendPct: 8 },
+};
 
 function whyPriceVol(symbol: string): WhyItem[] {
   const q = getQuote(symbol);
@@ -79,6 +94,7 @@ function whyPriceVol(symbol: string): WhyItem[] {
 async function volumeJob() {
   const names = listTickers("ticker");
   const fired: string[] = [];
+  const pushed: string[] = [];
   for (const t of names) {
     const q = getQuote(t.symbol);
     if (!q) continue;
@@ -92,28 +108,58 @@ async function volumeJob() {
         weight: Math.abs(sq.changePct) >= 3 ? 3 : 2,
       });
     }
-    if (!why.length) continue;
-    const score = why.reduce((a, w) => a + w.weight, 0);
-    const wsbBoost = recentWsbBoost(t.symbol);
-    if (wsbBoost) {
-      why.push({ text: `WSB menciones ${wsbBoost.text} (confirmación)`, kind: "wsb", weight: 0 });
+    if (why.length) {
+      const score = why.reduce((a, w) => a + w.weight, 0);
+      const wsbBoost = recentWsbBoost(t.symbol);
+      if (wsbBoost) {
+        why.push({ text: `WSB menciones ${wsbBoost.text} (confirmación)`, kind: "wsb", weight: 0 });
+      }
+      const cand: Candidate = {
+        title: `Volumen/precio inusual en ${t.symbol}`,
+        score,
+        confidence: confidenceFrom(why, false, why.filter((w) => w.kind !== "wsb").length),
+        why,
+        jobIds: ["volume.unusual"],
+        symbols: [t.symbol],
+        sources: [],
+      };
+      if (why.filter((w) => w.kind === "wsb").length && why.filter((w) => w.kind !== "wsb").length === 0) {
+        cand.score = Math.min(cand.score, 3);
+      }
+      const alert = await emitIfNeeded(cand);
+      if (alert) fired.push(t.symbol);
     }
-    const cand: Candidate = {
-      title: `Volumen/precio inusual en ${t.symbol}`,
-      score,
-      confidence: confidenceFrom(why, false, why.filter((w) => w.kind !== "wsb").length),
-      why,
-      jobIds: ["volume.unusual"],
-      symbols: [t.symbol],
-      sources: [],
-    };
-    if (why.filter((w) => w.kind === "wsb").length && why.filter((w) => w.kind !== "wsb").length === 0) {
-      cand.score = Math.min(cand.score, 3);
+
+    const thresh = TICKER_WATCH[t.category] ?? TICKER_WATCH.watchlist;
+    const reasons: string[] = [];
+    if (Math.abs(q.changePct) >= thresh.changePct) {
+      reasons.push(`${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% en el día`);
     }
-    const alert = await emitIfNeeded(cand);
-    if (alert) fired.push(t.symbol);
+    if (q.volumeRatio >= thresh.volumeRatio) {
+      reasons.push(`volumen ${q.volumeRatio.toFixed(1)}×`);
+    }
+    const trend = threeDayTrend(t.symbol);
+    if (trend && Math.abs(trend.pct) >= thresh.trendPct) {
+      const label = trend.dir > 0 ? "subida" : "bajada";
+      reasons.push(`${label} 3d ${trend.pct >= 0 ? "+" : ""}${trend.pct.toFixed(1)}%`);
+    }
+    if (!reasons.length) continue;
+    const ok = maybePushTickerWatch({
+      symbol: t.symbol,
+      category: t.category,
+      title: `${t.symbol} · ${t.category}`,
+      message: `${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% · ${reasons.join(" · ")}`,
+      changePct: q.changePct,
+      volumeRatio: q.volumeRatio,
+      reasons,
+      at: nowIso(),
+    });
+    if (ok) pushed.push(t.symbol);
   }
-  return fired.length ? `alertas: ${fired.join(", ")}` : "sin umbrales de volumen";
+  const bits = [];
+  if (fired.length) bits.push(`radar: ${fired.join(", ")}`);
+  if (pushed.length) bits.push(`cartera: ${pushed.join(", ")}`);
+  return bits.length ? bits.join(" · ") : "sin umbrales de volumen";
 }
 
 function recentWsbBoost(symbol: string): { text: string; ratio: number } | null {
@@ -378,7 +424,7 @@ async function redditSubsJob() {
 async function regimeJob() {
   const r = computeRegime();
   publishRegime(r, parseJson(getSetting("regime_why", "{}"), {}));
-  publishWatchlist(listTickers("ticker").map((t) => t.symbol));
+  publishCarteraState();
   publishIdeas(mappedIdeas());
   publishStatus({ regime: r, jobs: JOBS.length });
   return r;
@@ -511,7 +557,8 @@ async function reactionJob() {
 }
 
 export const JOBS: JobDef[] = [
-  { id: "quotes.poll", name: "Cotizaciones", description: "Precio y volumen del universo", cadenceMs: () => (isRth() ? 5 : 15) * 60_000, run: quotesJob },
+  { id: "quotes.poll", name: "Cotizaciones", description: "Precio, volumen y medias móviles", cadenceMs: () => (isRth() ? 5 : 15) * 60_000, run: quotesJob },
+  { id: "fundamentals.poll", name: "Fundamentals", description: "Rating analistas, PT y 52w", cadenceMs: () => 60 * 60_000, run: fundamentalsJob },
   { id: "regime.tick", name: "Régimen", description: "NORMAL → CRISIS", cadenceMs: () => (isRth() ? 5 : 15) * 60_000, run: regimeJob },
   {
     id: "macro.scan",
@@ -541,7 +588,7 @@ export const JOBS: JobDef[] = [
     id: "volume.unusual",
     letter: "D",
     name: "Volumen inusual",
-    description: "Vs media y shocks de ETF",
+    description: "Radar + vigilante de cartera (precio, volumen, 3d)",
     cadenceMs: () => (isRth() ? 5 : 15) * 60_000,
     run: volumeJob,
   },
@@ -625,6 +672,11 @@ export function getState() {
     jobs: listJobs(),
     tickers: listTickers("ticker"),
     etfs: listTickers("etf"),
+    cartera: {
+      holding: listPositions("holding"),
+      priority: listPositions("priority"),
+      watch: listPositions("watchlist"),
+    },
     factors: listFactors(),
     ideas,
     quotes: allQuotes(),

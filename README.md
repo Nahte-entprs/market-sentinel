@@ -39,7 +39,7 @@ npm run dev
 
 ## Producción en HAOS
 
-1. HACS → **Mushroom** (opcional; hay [`ha/lovelace/centinela-native.yaml`](ha/lovelace/centinela-native.yaml)).
+1. HACS → **Mushroom** y **auto-entities** (para la pestaña Cartera; hay [`ha/lovelace/centinela-native.yaml`](ha/lovelace/centinela-native.yaml) sin custom cards).
 2. Complemento **Mosquitto**. Anota usuario/clave.
 3. Tienda → repositorio `https://github.com/Nahte-entprs/market-sentinel` → **Centinela** → Instalar.
 4. Opciones: `mqtt_url: mqtt://core-mosquitto:1883`, usuario/clave, `TZ=America/Santiago`.
@@ -53,7 +53,9 @@ homeassistant:
    Copia [`ha/packages/centinela.yaml`](ha/packages/centinela.yaml) a `/config/packages/`.
 6. Nuevo dashboard: pega [`ha/lovelace/centinela.yaml`](ha/lovelace/centinela.yaml) o [`ha/lovelace/centinela-native.yaml`](ha/lovelace/centinela-native.yaml).
 7. Arranca el add-on. Debe aparecer el dispositivo **Centinela** (MQTT).
-8. Tickers e ideas en Lovelace. Los avisos van a la app **Companion**.
+8. Tickers e ideas en Lovelace. Cartera: Holding / Priority / Watchlist (fair manual, ratings Yahoo). Los avisos van a la app **Companion**.
+
+Tras actualizar el complemento, vuelve a pegar el YAML de Lovelace y copia de nuevo [`ha/packages/centinela.yaml`](ha/packages/centinela.yaml) (incluye avisos de cartera).
 
 Node-RED es opcional ([`nodered/centinela.json`](nodered/centinela.json)). El add-on **no publica puerto de UI**.
 
@@ -62,7 +64,7 @@ Node-RED es opcional ([`nodered/centinela.json`](nodered/centinela.json)). El ad
 - **A** Macro — petróleo, USDJPY, 10Y, VIX, factores
 - **B** Eventos de ticker — T0/T1, 8-K, tesis, grafo
 - **C** Sentimiento — léxico + régimen
-- **D** Volumen inusual
+- **D** Volumen inusual + vigilante de cartera (push al teléfono)
 - **E** Reddit rising (nunca alerta HIGH por sí solo)
 - Ideas — apoyar / refutar tus claims
 - Régimen NORMAL → CRISIS, briefing 2 h, snapshots T+

@@ -21,7 +21,11 @@ CREATE TABLE IF NOT EXISTS tickers (
   sector TEXT NOT NULL,
   kind TEXT NOT NULL DEFAULT 'ticker',
   enabled INTEGER NOT NULL DEFAULT 1,
-  added_at TEXT NOT NULL
+  added_at TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'watchlist',
+  invested_usd REAL NOT NULL DEFAULT 0,
+  fair_price REAL,
+  sort_order INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sectors (
@@ -56,7 +60,16 @@ CREATE TABLE IF NOT EXISTS quotes (
   volume INTEGER NOT NULL,
   avg_volume INTEGER NOT NULL,
   volume_ratio REAL NOT NULL,
-  ts TEXT NOT NULL
+  ts TEXT NOT NULL,
+  ma50 REAL,
+  ma100 REAL,
+  ma200 REAL,
+  target_mean REAL,
+  rec_mean REAL,
+  rec_key TEXT,
+  analyst_count INTEGER,
+  week52_high REAL,
+  week52_low REAL
 );
 
 CREATE TABLE IF NOT EXISTS quote_bars (
@@ -166,6 +179,26 @@ CREATE TABLE IF NOT EXISTS reddit_ticker_snapshots (
 );
 `);
 
+function ensureColumn(table: string, column: string, ddl: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (cols.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+ensureColumn("tickers", "category", "category TEXT NOT NULL DEFAULT 'watchlist'");
+ensureColumn("tickers", "invested_usd", "invested_usd REAL NOT NULL DEFAULT 0");
+ensureColumn("tickers", "fair_price", "fair_price REAL");
+ensureColumn("tickers", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0");
+ensureColumn("quotes", "ma50", "ma50 REAL");
+ensureColumn("quotes", "ma100", "ma100 REAL");
+ensureColumn("quotes", "ma200", "ma200 REAL");
+ensureColumn("quotes", "target_mean", "target_mean REAL");
+ensureColumn("quotes", "rec_mean", "rec_mean REAL");
+ensureColumn("quotes", "rec_key", "rec_key TEXT");
+ensureColumn("quotes", "analyst_count", "analyst_count INTEGER");
+ensureColumn("quotes", "week52_high", "week52_high REAL");
+ensureColumn("quotes", "week52_low", "week52_low REAL");
+
 export function nowIso() {
   return new Date().toISOString();
 }
@@ -212,4 +245,16 @@ export function id(prefix: string) {
 export function readJsonFile<T>(rel: string): T {
   const p = path.join(ROOT, "data", rel);
   return JSON.parse(fs.readFileSync(p, "utf8")) as T;
+}
+
+if (getMeta("cartera_v1") !== "1") {
+  const cats = ["holding", "priority", "watchlist"];
+  for (const cat of cats) {
+    const rows = db
+      .prepare("SELECT symbol FROM tickers WHERE kind = 'ticker' AND category = ? ORDER BY symbol")
+      .all(cat) as { symbol: string }[];
+    const upd = db.prepare("UPDATE tickers SET sort_order = ? WHERE symbol = ?");
+    rows.forEach((r, i) => upd.run(i + 1, r.symbol));
+  }
+  setMeta("cartera_v1", "1");
 }

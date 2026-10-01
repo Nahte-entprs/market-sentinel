@@ -6,11 +6,20 @@ import path from "node:path";
 import fs from "node:fs";
 import { config, ROOT } from "./config.ts";
 import { getState, runJob } from "./jobs.ts";
-import { addIdea, addTicker, listFactors } from "./universe.ts";
-import { publishTextState, publishWatchlist } from "./mqtt.ts";
-import { listTickers } from "./universe.ts";
+import { addIdea, addTicker, listFactors, upsertTicker, removeTicker, parseCategory } from "./universe.ts";
+import { publishTextState } from "./mqtt.ts";
+import type { MqttDrafts } from "./mqtt.ts";
+import { publishCarteraState } from "./portfolio.ts";
 
-export const drafts = { ticker: "", ideaTitle: "", ideaClaim: "", ideaFactor: "iran" };
+export const drafts: MqttDrafts = {
+  ticker: "",
+  ideaTitle: "",
+  ideaClaim: "",
+  ideaFactor: "iran",
+  category: "watchlist",
+  investedUsd: 0,
+  fairPrice: 0,
+};
 
 export function buildApi() {
   const app = new Hono();
@@ -28,12 +37,30 @@ export function buildApi() {
     return c.json(info);
   });
   app.post("/api/tickers", async (c) => {
-    const body = await c.req.json<{ symbol?: string }>();
-    const symbol = addTicker(body.symbol || drafts.ticker);
+    const body = await c.req.json<{
+      symbol?: string;
+      category?: string;
+      investedUsd?: number;
+      fairPrice?: number;
+    }>();
+    const symbol =
+      body.category || body.investedUsd != null || body.fairPrice != null
+        ? upsertTicker({
+            symbol: body.symbol || drafts.ticker,
+            category: parseCategory(body.category),
+            investedUsd: body.investedUsd,
+            fairPrice: body.fairPrice,
+          })
+        : addTicker(body.symbol || drafts.ticker);
     drafts.ticker = "";
-    publishWatchlist(listTickers("ticker").map((t) => t.symbol));
+    publishCarteraState();
     publishTextState(drafts);
     return c.json({ symbol });
+  });
+  app.delete("/api/tickers/:symbol", (c) => {
+    removeTicker(c.req.param("symbol"));
+    publishCarteraState();
+    return c.json({ ok: true });
   });
   app.post("/api/ideas", async (c) => {
     const body = await c.req.json<{ title?: string; claim?: string; factorId?: string }>();

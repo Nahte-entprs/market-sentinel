@@ -29,6 +29,26 @@ automation:
             ttl: 0
             priority: high
 
+  - id: centinela_ticker_companion
+    alias: "Centinela cartera → Companion"
+    mode: queued
+    max: 10
+    trigger:
+      - platform: mqtt
+        topic: centinela/ticker_alert
+    action:
+      - service: notify.notify
+        data:
+          title: "Centinela {{ trigger.payload_json.symbol }} · {{ trigger.payload_json.category }}"
+          message: >
+            {{ trigger.payload_json.message }}
+
+            No es consejo financiero.
+          data:
+            url: /dashboard-centinela/cartera
+            ttl: 0
+            priority: high
+
   - id: centinela_digest_companion
     alias: "Centinela digest → Companion"
     mode: queued

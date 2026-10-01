@@ -1,10 +1,19 @@
-import { seedIfNeeded, addIdea, addTicker } from "./universe.ts";
+import { seedIfNeeded, addIdea, addTicker, upsertTicker, removeTicker, moveTicker, getTicker, parseCategory } from "./universe.ts";
 import { startScheduler, runJob, listJobs } from "./jobs.ts";
 import { startMqtt, publishTextState } from "./mqtt.ts";
 import { startApi, drafts } from "./api.ts";
+import { publishCarteraState } from "./portfolio.ts";
 import { config } from "./config.ts";
 
 seedIfNeeded();
+
+function refreshCartera() {
+  try {
+    publishCarteraState();
+  } catch (e) {
+    console.error("[cartera]", (e as Error).message);
+  }
+}
 
 await startMqtt({
   onAddTicker: (s) => {
@@ -12,9 +21,53 @@ await startMqtt({
       addTicker(s);
       drafts.ticker = "";
       publishTextState(drafts);
+      refreshCartera();
     } catch (e) {
       console.error("[ticker]", (e as Error).message);
     }
+  },
+  onSaveTicker: () => {
+    try {
+      upsertTicker({
+        symbol: drafts.ticker,
+        category: parseCategory(drafts.category),
+        investedUsd: drafts.investedUsd,
+        fairPrice: drafts.fairPrice,
+      });
+      publishTextState(drafts);
+      refreshCartera();
+    } catch (e) {
+      console.error("[ticker]", (e as Error).message);
+    }
+  },
+  onRemoveTicker: () => {
+    try {
+      removeTicker(drafts.ticker);
+      drafts.ticker = "";
+      drafts.investedUsd = 0;
+      drafts.fairPrice = 0;
+      drafts.category = "watchlist";
+      publishTextState(drafts);
+      refreshCartera();
+    } catch (e) {
+      console.error("[ticker]", (e as Error).message);
+    }
+  },
+  onMoveTicker: (dir) => {
+    try {
+      moveTicker(drafts.ticker, dir);
+      refreshCartera();
+    } catch (e) {
+      console.error("[ticker]", (e as Error).message);
+    }
+  },
+  onTickerDraft: (s) => {
+    const t = getTicker(s);
+    if (!t || t.enabled !== 1) return;
+    drafts.category = t.category;
+    drafts.investedUsd = t.invested_usd;
+    drafts.fairPrice = t.fair_price ?? 0;
+    publishTextState(drafts);
   },
   onAddIdea: (title, claim, factor) => {
     try {
@@ -29,11 +82,13 @@ await startMqtt({
   onRunJob: (id) => {
     void runJob(id);
   },
+  onReady: refreshCartera,
   drafts,
 });
 
 startApi();
 startScheduler();
+refreshCartera();
 
 console.log(
   `[centinela] arranque · TZ=${config.tz} · preview=${config.previewUi} · mqtt=${config.mqttUrl || "off"} · jobs=${listJobs().length}`,

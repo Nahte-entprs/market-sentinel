@@ -1,8 +1,9 @@
-import { db, id, json, nowIso, parseJson } from "./db.ts";
+import { db, id, json, nowIso, parseJson, getMeta, setMeta } from "./db.ts";
 import { cooldownMs, currentRegime, scoreThreshold, suppressPush } from "./regime.ts";
+import { isQuietHours } from "./config.ts";
 import { templateSummarize, maybeEnrich } from "./summarizer.ts";
-import { publishAlert, publishEnrich, publishDigest } from "./mqtt.ts";
-import type { AlertRecord, Candidate, Regime } from "./types.ts";
+import { publishAlert, publishEnrich, publishDigest, publishTickerAlert } from "./mqtt.ts";
+import type { AlertRecord, Candidate, Regime, TickerAlert } from "./types.ts";
 
 export function lastAlert(): AlertRecord | null {
   const r = db.prepare("SELECT * FROM alerts ORDER BY created_at DESC LIMIT 1").get() as Record<string, unknown> | undefined;
@@ -116,6 +117,16 @@ export async function emitIfNeeded(c: Candidate): Promise<AlertRecord | null> {
   });
 
   return rec;
+}
+
+export function maybePushTickerWatch(alert: TickerAlert): boolean {
+  const last = getMeta(`ticker_watch_${alert.symbol}`);
+  if (last && Date.now() - Date.parse(last) < cooldownMs()) return false;
+  const steep = Math.abs(alert.changePct) >= 5;
+  if (isQuietHours() && alert.category !== "holding" && !steep) return false;
+  setMeta(`ticker_watch_${alert.symbol}`, nowIso());
+  publishTickerAlert(alert);
+  return true;
 }
 
 export function saveDigest(text: string) {

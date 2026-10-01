@@ -10,8 +10,9 @@ views:
         cards:
           - type: markdown
             content: >
-              **Maqueta de referencia Mushroom.** Instala [Mushroom](https://github.com/piitaya/lovelace-mushroom) vía HACS.
-              Si no está, usa `centinela-native.yaml`.
+              **Mushroom + auto-entities.** Instala [Mushroom](https://github.com/piitaya/lovelace-mushroom)
+              y [auto-entities](https://github.com/thomasloven/lovelace-auto-entities) vía HACS.
+              Tickers: pestaña **Cartera**.
 
           - type: custom:mushroom-template-card
             primary: "Régimen {{ states('sensor.centinela_regime') }}"
@@ -50,15 +51,12 @@ views:
       - type: grid
         cards:
           - type: custom:mushroom-title-card
-            title: Tickers de interés
+            title: Cartera
           - type: markdown
-            content: |
-              {% set ticks = state_attr('sensor.centinela_watchlist', 'tickers') or [] %}
-              {{ ticks | join(' · ') }}
-          - type: entities
-            entities:
-              - entity: text.centinela_nuevo_ticker
-              - entity: button.centinela_add_ticker
+            content: >
+              Holding / Priority / Watchlist están en la pestaña **Cartera**.
+              {% set n = states('sensor.centinela_watchlist') %}
+              {{ n }} tickers en radar.
 
           - type: custom:mushroom-title-card
             title: Ideas de mercado
@@ -95,6 +93,8 @@ views:
               - entity: button.centinela_run_reddit_subs
               - entity: sensor.centinela_job_ideas_eval
               - entity: button.centinela_run_ideas_eval
+              - entity: sensor.centinela_job_fundamentals_poll
+              - entity: button.centinela_run_fundamentals_poll
 
           - type: markdown
             content: |
@@ -109,3 +109,131 @@ views:
             content: |
               ### Briefing
               {{ state_attr('sensor.centinela_digest', 'text') or states('sensor.centinela_digest') }}
+
+  - title: Cartera
+    path: cartera
+    icon: mdi:briefcase-variant-outline
+    type: sections
+    max_columns: 1
+    sections:
+      - type: grid
+        cards:
+          - type: markdown
+            content: >
+              No es consejo financiero. Fair lo cargas tú; rating y PT vienen de Yahoo.
+
+          - type: custom:mushroom-title-card
+            title: Holding
+            subtitle: Orden por USD invertido
+
+          - type: markdown
+            content: >
+              {% set n = states('sensor.centinela_holding') %}
+              {% if n in ['unknown', 'unavailable', '0', ''] %}Sin holdings.{% endif %}
+
+          - type: custom:auto-entities
+            show_empty: false
+            card:
+              type: vertical-stack
+            card_param: cards
+            filter:
+              template: |
+                {% for t in state_attr('sensor.centinela_holding', 'positions') or [] %}
+                {{
+                  {
+                    'type': 'custom:mushroom-template-card',
+                    'primary': t.symbol ~ '  ' ~ t.price_fmt ~ '  ' ~ t.change_fmt,
+                    'secondary': t.line2 ~ '\n' ~ t.line3,
+                    'multiline_secondary': true,
+                    'icon': 'mdi:briefcase-outline',
+                    'icon_color': t.icon_color,
+                    'badge_icon': t.badge_icon,
+                    'badge_color': t.badge_color,
+                    'entity': 'sensor.centinela_holding'
+                  }
+                }},
+                {%- endfor %}
+
+          - type: custom:mushroom-title-card
+            title: Priority
+            subtitle: Corto plazo · orden manual
+
+          - type: markdown
+            content: >
+              {% set n = states('sensor.centinela_priority') %}
+              {% if n in ['unknown', 'unavailable', '0', ''] %}Sin priority.{% endif %}
+
+          - type: custom:auto-entities
+            show_empty: false
+            card:
+              type: vertical-stack
+            card_param: cards
+            filter:
+              template: |
+                {% for t in state_attr('sensor.centinela_priority', 'positions') or [] %}
+                {{
+                  {
+                    'type': 'custom:mushroom-template-card',
+                    'primary': t.symbol ~ '  ' ~ t.price_fmt ~ '  ' ~ t.change_fmt,
+                    'secondary': t.line2 ~ '\n' ~ t.line3,
+                    'multiline_secondary': true,
+                    'icon': 'mdi:star-four-points',
+                    'icon_color': t.icon_color,
+                    'badge_icon': t.badge_icon,
+                    'badge_color': t.badge_color,
+                    'entity': 'sensor.centinela_priority'
+                  }
+                }},
+                {%- endfor %}
+
+          - type: custom:mushroom-title-card
+            title: Watchlist
+            subtitle: Orden manual
+
+          - type: markdown
+            content: >
+              {% set n = states('sensor.centinela_watch') %}
+              {% if n in ['unknown', 'unavailable', '0', ''] %}Sin watchlist.{% endif %}
+
+          - type: custom:auto-entities
+            show_empty: false
+            card:
+              type: vertical-stack
+            card_param: cards
+            filter:
+              template: |
+                {% for t in state_attr('sensor.centinela_watch', 'positions') or [] %}
+                {{
+                  {
+                    'type': 'custom:mushroom-template-card',
+                    'primary': t.symbol ~ '  ' ~ t.price_fmt ~ '  ' ~ t.change_fmt,
+                    'secondary': t.line2 ~ '\n' ~ t.line3,
+                    'multiline_secondary': true,
+                    'icon': 'mdi:eye-outline',
+                    'icon_color': t.icon_color,
+                    'badge_icon': t.badge_icon,
+                    'badge_color': t.badge_color,
+                    'entity': 'sensor.centinela_watch'
+                  }
+                }},
+                {%- endfor %}
+
+          - type: custom:mushroom-title-card
+            title: Gestionar
+            subtitle: Escribe un ticker existente para rellenar
+
+          - type: markdown
+            content: >
+              **Guardar** añade o actualiza lista / USD / fair.
+              Subir y bajar solo aplican a Priority y Watchlist.
+
+          - type: entities
+            entities:
+              - entity: text.centinela_nuevo_ticker
+              - entity: select.centinela_ticker_categoria
+              - entity: number.centinela_invertido
+              - entity: number.centinela_fair_price
+              - entity: button.centinela_save_ticker
+              - entity: button.centinela_remove_ticker
+              - entity: button.centinela_ticker_up
+              - entity: button.centinela_ticker_down

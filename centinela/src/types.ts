@@ -71,6 +71,8 @@ export type JobInfo = {
   lastNote: string | null;
 };
 
+export type TickerCategory = "holding" | "priority" | "watchlist";
+
 export type QuoteSnap = {
   symbol: string;
   price: number;
@@ -80,6 +82,60 @@ export type QuoteSnap = {
   avgVolume: number;
   volumeRatio: number;
   ts: string;
+  ma50: number | null;
+  ma100: number | null;
+  ma200: number | null;
+  targetMean: number | null;
+  recMean: number | null;
+  recKey: string | null;
+  analystCount: number | null;
+  week52High: number | null;
+  week52Low: number | null;
+};
+
+export type CarteraPosition = {
+  symbol: string;
+  name: string;
+  category: TickerCategory;
+  invested: number;
+  invested_fmt: string;
+  fair: number | null;
+  fair_fmt: string | null;
+  fair_delta_pct: number | null;
+  price: number | null;
+  price_fmt: string;
+  change_pct: number | null;
+  change_fmt: string;
+  rec_label: string;
+  rec_key: string | null;
+  analyst_count: number | null;
+  target_mean: number | null;
+  target_fmt: string | null;
+  ma50: number | null;
+  ma100: number | null;
+  ma200: number | null;
+  ma50_delta_pct: number | null;
+  volume_ratio: number | null;
+  week52_high: number | null;
+  week52_low: number | null;
+  week52_pos: number | null;
+  week52_line: string;
+  line2: string;
+  line3: string;
+  icon_color: string;
+  badge_icon: string;
+  badge_color: string;
+};
+
+export type TickerAlert = {
+  symbol: string;
+  category: TickerCategory;
+  title: string;
+  message: string;
+  changePct: number;
+  volumeRatio: number;
+  reasons: string[];
+  at: string;
 };
 
 export type NewsItem = {
