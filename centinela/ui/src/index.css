@@ -2,13 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: dark;
+  --c-bg: #111318;
+  --c-card: #1c1d20;
+  --c-nav: #16181d;
+  --c-input: #111318;
+  --c-inset: color-mix(in srgb, #e8eaed 8%, transparent);
+  --c-border: #2c2e33;
+  --c-text: #e8eaed;
+  --c-muted: #9aa0a6;
+  --c-accent: #03a9f4;
+  --c-on-accent: #111318;
+  --c-green: #4caf50;
+  --c-red: #f44336;
+  --c-amber: #ff9800;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --c-bg: #f5f6f8;
+    --c-card: #ffffff;
+    --c-nav: #ffffff;
+    --c-input: #ffffff;
+    --c-inset: color-mix(in srgb, #1f1f1f 6%, transparent);
+    --c-border: #dadce0;
+    --c-text: #1f1f1f;
+    --c-muted: #5f6368;
+    --c-accent: #0288d1;
+    --c-on-accent: #ffffff;
+    --c-green: #137333;
+    --c-red: #c5221f;
+    --c-amber: #b06000;
+  }
+}
+
 html,
 body,
 #root {
   min-height: 100%;
   min-height: 100dvh;
-  background: #111318;
-  color: #e8eaed;
+  background: var(--c-bg);
+  color: var(--c-text);
 }
 
 body {

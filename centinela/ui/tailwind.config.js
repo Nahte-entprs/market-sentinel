@@ -10,15 +10,19 @@ export default {
     extend: {
       colors: {
         ha: {
-          bg: "#111318",
-          card: "#1c1d20",
-          border: "#2c2e33",
-          text: "#e8eaed",
-          muted: "#9aa0a6",
-          accent: "#03a9f4",
-          green: "#4caf50",
-          red: "#f44336",
-          amber: "#ff9800",
+          bg: "var(--c-bg)",
+          card: "var(--c-card)",
+          nav: "var(--c-nav)",
+          input: "var(--c-input)",
+          inset: "var(--c-inset)",
+          border: "var(--c-border)",
+          text: "var(--c-text)",
+          muted: "var(--c-muted)",
+          accent: "var(--c-accent)",
+          onaccent: "var(--c-on-accent)",
+          green: "var(--c-green)",
+          red: "var(--c-red)",
+          amber: "var(--c-amber)",
         },
       },
       fontFamily: {

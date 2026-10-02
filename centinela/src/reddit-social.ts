@@ -3,6 +3,7 @@ import { db, nowIso, readJsonFile } from "./db.ts";
 import { isMegaCap, lexiconPolarity } from "./entities.ts";
 import { extractSocialTickers, pickCommentTicker } from "./ticker-filter.ts";
 import { MARKET_TZ } from "./config.ts";
+import type { TickerPace } from "./types.ts";
 
 /**
  * Recolección social (G3): cuenta y guarda. No clasifica sarcasmo ni “inteligencia”.
@@ -68,6 +69,9 @@ export type SocialRun = {
     bar_flat: string;
     note: string;
   };
+  windowHours: number;
+  windowComments: number;
+  tickers24h: TickerPace[];
   storage: { keepDays: number; comments: number; oldestNyDay: string | null };
   errors: string[];
 };
@@ -183,7 +187,7 @@ function sentimentBoard(bull: number, bear: number, unlabeled: number): SocialRu
     bar_bull: meter(pct_bull),
     bar_bear: meter(pct_bear),
     bar_flat: meter(pct_flat),
-    note: "Conteo de palabras (moon, calls, puts, crash). No lee sarcasmo; el agente futuro lo sustituye.",
+    note: "Léxico de las últimas 24 h (no el archivo de 31 días). Palabras sueltas; no lee sarcasmo.",
   };
 }
 
@@ -509,41 +513,41 @@ function emergingBlocks(groups: { sub: string; hits: TickerHit[] }[]): { sub: st
     .filter((b) => b.tickers.length > 0);
 }
 
-function boardFromDb(
-  ts: string,
+function isoAgo(ms: number) {
+  return new Date(Date.now() - ms).toISOString();
+}
+
+function board24h(
   subs: string[],
   preferTickers: string[],
-): { quotes: CommentQuote[]; sentiment: SocialRun["sentiment"] } {
-  const placeholders = subs.map(() => "?").join(",");
-  const prefer = new Set(preferTickers);
-  const quoteRows = db
-    .prepare(
-      `SELECT c.id, c.body, c.score, c.cheap_flag, c.sub,
-              GROUP_CONCAT(t.ticker, ',') AS tickers
-       FROM reddit_comments c
-       JOIN reddit_comment_tickers t ON t.comment_id = c.id
-       WHERE c.captured_at = ? AND c.sub IN (${placeholders})
-         AND c.cheap_flag = 'ok' AND length(c.body) >= 40
-       GROUP BY c.id
-       ORDER BY c.score DESC
-       LIMIT 12`,
-    )
-    .all(ts, ...subs) as { id: string; body: string; score: number; cheap_flag: string; sub: string; tickers: string | null }[];
+): {
+  quotes: CommentQuote[];
+  sentiment: SocialRun["sentiment"];
+  windowComments: number;
+  tickers24h: TickerPace[];
+} {
+  const emptySent = sentimentBoard(0, 0, 0);
+  if (!subs.length) {
+    return { quotes: [], sentiment: emptySent, windowComments: 0, tickers24h: [] };
+  }
+  const since24 = isoAgo(24 * 3600_000);
+  const since1h = isoAgo(3600_000);
+  const since3h = isoAgo(3 * 3600_000);
+  const ph = subs.map(() => "?").join(",");
 
-  const quotes: CommentQuote[] = quoteRows.map((r) => ({
-    ticker: pickCommentTicker(r.tickers, prefer),
-    body: r.body.replace(/\s+/g, " ").slice(0, 280),
-    score: r.score,
-    flag: r.cheap_flag,
-    sub: r.sub,
-  }));
+  const windowComments = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM reddit_comments WHERE created_utc >= ? AND sub IN (${ph}) AND cheap_flag = 'ok'`,
+      )
+      .get(since24, ...subs) as { n: number }
+  ).n;
 
   const polarRows = db
     .prepare(
-      `SELECT body FROM reddit_comments
-       WHERE captured_at = ? AND sub IN (${placeholders}) AND cheap_flag = 'ok'`,
+      `SELECT body FROM reddit_comments WHERE created_utc >= ? AND sub IN (${ph}) AND cheap_flag = 'ok'`,
     )
-    .all(ts, ...subs) as { body: string }[];
+    .all(since24, ...subs) as { body: string }[];
   let bull = 0;
   let bear = 0;
   let unlabeled = 0;
@@ -553,7 +557,77 @@ function boardFromDb(
     else if (p < 0) bear++;
     else unlabeled++;
   }
-  return { quotes, sentiment: sentimentBoard(bull, bear, unlabeled) };
+
+  const paceRows = db
+    .prepare(
+      `SELECT t.ticker AS ticker,
+              COUNT(*) AS comments,
+              SUM(CASE WHEN c.created_utc >= ? THEN 1 ELSE 0 END) AS last1h,
+              SUM(CASE WHEN c.created_utc >= ? THEN 1 ELSE 0 END) AS last3h
+       FROM reddit_comments c
+       JOIN reddit_comment_tickers t ON t.comment_id = c.id
+       WHERE c.created_utc >= ? AND c.sub IN (${ph})
+         AND c.cheap_flag NOT IN ('deleted', 'automod')
+       GROUP BY t.ticker
+       HAVING comments >= 2`,
+    )
+    .all(since1h, since3h, since24, ...subs) as {
+    ticker: string;
+    comments: number;
+    last1h: number;
+    last3h: number;
+  }[];
+
+  const tickers24h: TickerPace[] = paceRows
+    .map((r) => {
+      const comments = Number(r.comments);
+      const last1h = Number(r.last1h);
+      const last3h = Number(r.last3h);
+      const rest = Math.max(0, comments - last1h);
+      const hourlyAvg = rest / 23;
+      const velocity = hourlyAvg >= 0.4 ? last1h / hourlyAvg : last1h >= 5 ? 20 : last1h;
+      const spike = last1h >= 6 && velocity >= 2.5;
+      return { ticker: r.ticker, comments, last1h, last3h, velocity, spike };
+    })
+    .sort((a, b) => Number(b.spike) - Number(a.spike) || b.velocity - a.velocity || b.comments - a.comments)
+    .slice(0, 24);
+
+  const prefer = new Set(preferTickers.length ? preferTickers : tickers24h.slice(0, 10).map((t) => t.ticker));
+  const quoteRows = db
+    .prepare(
+      `SELECT c.body, c.score, c.sub, c.created_utc,
+              GROUP_CONCAT(t.ticker, ',') AS tickers
+       FROM reddit_comments c
+       JOIN reddit_comment_tickers t ON t.comment_id = c.id
+       WHERE c.created_utc >= ? AND c.sub IN (${ph})
+         AND c.cheap_flag = 'ok' AND length(c.body) >= 80
+       GROUP BY c.id
+       ORDER BY (CASE WHEN c.created_utc >= ? THEN 8 ELSE 0 END) + MIN(c.score, 40) DESC,
+                length(c.body) DESC, c.created_utc DESC
+       LIMIT 25`,
+    )
+    .all(since24, ...subs, since3h) as {
+    body: string;
+    score: number;
+    sub: string;
+    created_utc: string;
+    tickers: string | null;
+  }[];
+
+  const quotes: CommentQuote[] = quoteRows.map((r) => ({
+    ticker: pickCommentTicker(r.tickers, prefer),
+    body: r.body.replace(/\s+/g, " ").slice(0, 420),
+    score: r.score,
+    flag: "ok",
+    sub: r.sub,
+  }));
+
+  return {
+    quotes,
+    sentiment: sentimentBoard(bull, bear, unlabeled),
+    windowComments,
+    tickers24h,
+  };
 }
 
 function prune() {
@@ -650,8 +724,7 @@ export async function collectWsbDaily(): Promise<SocialRun> {
   const insW = db.prepare("INSERT OR REPLACE INTO wsb_mentions (ticker, captured_at, count) VALUES (?, ?, ?)");
   for (const h of hits) insW.run(h.ticker, ts, h.comments);
   const em = rankEmerging(hits);
-  const board = boardFromDb(
-    ts,
+  const board = board24h(
     [c.wsb],
     em.map((h) => h.ticker),
   );
@@ -668,6 +741,9 @@ export async function collectWsbDaily(): Promise<SocialRun> {
     tickers: em,
     quotes: board.quotes,
     sentiment: board.sentiment,
+    windowHours: 24,
+    windowComments: board.windowComments,
+    tickers24h: board.tickers24h,
     storage: storageStats(),
     errors,
   };
@@ -705,8 +781,7 @@ export async function collectOtherSubs(): Promise<SocialRun> {
   const hits = mergeHits(perSub.map((p) => p.hits));
   const bySub = emergingBlocks(perSub);
   const em = rankEmerging(hits);
-  const board = boardFromDb(
-    ts,
+  const board = board24h(
     c.subs,
     em.map((h) => h.ticker),
   );
@@ -723,6 +798,9 @@ export async function collectOtherSubs(): Promise<SocialRun> {
     tickers: bySub.flatMap((b) => b.tickers),
     quotes: board.quotes,
     sentiment: board.sentiment,
+    windowHours: 24,
+    windowComments: board.windowComments,
+    tickers24h: board.tickers24h,
     storage: storageStats(),
     errors,
   };

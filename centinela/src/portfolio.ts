@@ -1,5 +1,5 @@
 import { listTickers, listTickersByCategory } from "./universe.ts";
-import { getQuote } from "./quotes.ts";
+import { getQuote, lastBarVolumeVsMedian } from "./quotes.ts";
 import { publishCartera, publishWatchlist } from "./mqtt.ts";
 import type { CarteraPosition, TickerCategory } from "./types.ts";
 import type { TickerRow } from "./universe.ts";
@@ -40,6 +40,7 @@ export function toPosition(t: TickerRow): CarteraPosition {
   const ma50Delta = q?.ma50 && price ? ((price - q.ma50) / q.ma50) * 100 : null;
   const rec = recLabel(q?.recKey ?? null, q?.recMean ?? null);
   const vol = q?.volumeRatio ?? null;
+  const intraVol = lastBarVolumeVsMedian(t.symbol);
   const w52h = q?.week52High ?? null;
   const w52l = q?.week52Low ?? null;
   let week52Pos: number | null = null;
@@ -59,7 +60,12 @@ export function toPosition(t: TickerRow): CarteraPosition {
   const ma100s = q?.ma100 != null ? usd(q.ma100, 0) : "—";
   const ma200s = q?.ma200 != null ? usd(q.ma200, 0) : "—";
   const ma50bit = ma50Delta != null ? `${pctFmt(ma50Delta)} 50d` : "50d n/d";
-  const volBit = vol != null && vol >= 1.5 ? ` · vol ${vol.toFixed(1)}×` : vol != null ? ` · vol ${vol.toFixed(1)}×` : "";
+  const volBit =
+    intraVol != null && intraVol >= 1.5
+      ? ` · 5m ${intraVol.toFixed(1)}×`
+      : vol != null
+        ? ` · vol ${vol.toFixed(1)}×`
+        : "";
   const ptBit = q?.targetMean ? ` · PT ${usd(q.targetMean)}` : "";
 
   let icon = "grey";
@@ -89,6 +95,7 @@ export function toPosition(t: TickerRow): CarteraPosition {
     ma200: q?.ma200 ?? null,
     ma50_delta_pct: ma50Delta,
     volume_ratio: vol,
+    intraday_vol_ratio: intraVol,
     week52_high: w52h,
     week52_low: w52l,
     week52_pos: week52Pos,
@@ -96,8 +103,8 @@ export function toPosition(t: TickerRow): CarteraPosition {
     line2: `${investedBit}${fairBit} · ${ratingBit}${ptBit}`,
     line3: `50/100/200 ${ma50s} / ${ma100s} / ${ma200s} · ${ma50bit}${volBit} · ${week52Line}`,
     icon_color: icon,
-    badge_icon: vol != null && vol >= 2 ? "mdi:fire" : "",
-    badge_color: vol != null && vol >= 2 ? "orange" : "",
+    badge_icon: (intraVol != null && intraVol >= 3) || (vol != null && vol >= 2) ? "mdi:fire" : "",
+    badge_color: (intraVol != null && intraVol >= 3) || (vol != null && vol >= 2) ? "orange" : "",
   };
 }
 

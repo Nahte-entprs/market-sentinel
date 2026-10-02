@@ -9,7 +9,7 @@ const LABELS: Record<Category, string> = {
 };
 
 const HINTS: Record<Category, string> = {
-  holding: "Por USD invertido · toca para detalle · mantén para quitar",
+  holding: "Por USD invertido · toca para detalle · alarmas de volumen 5m",
   priority: "Corto plazo · flechas para ordenar",
   watchlist: "En la mira · flechas para ordenar",
 };
@@ -127,7 +127,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
           placeholder="NVDA"
           autoComplete="off"
           autoCapitalize="characters"
-          className="mt-1 w-full rounded-xl bg-[#111318] border border-ha-accent/50 px-3 py-2.5 text-base tracking-wide"
+          className="mt-1 w-full rounded-xl bg-ha-input border border-ha-accent/50 px-3 py-2.5 text-base tracking-wide"
         />
         <p className="text-[11px] text-ha-muted mt-2">Escríbelo y tócalo + en la lista donde va.</p>
       </div>
@@ -143,7 +143,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
               type="button"
               disabled={busy || symbol.trim().length < 1}
               onClick={() => void addTo(cat)}
-              className="h-9 w-9 rounded-full bg-ha-accent text-black text-xl leading-none disabled:opacity-30"
+              className="h-9 w-9 rounded-full bg-ha-accent text-ha-onaccent text-xl leading-none disabled:opacity-30"
               aria-label={`Añadir a ${LABELS[cat]}`}
             >
               +
@@ -173,6 +173,9 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                         <span className="text-sm tabular-nums">
                           {p.price_fmt}
                           <span className={`ml-2 ${up ? "text-ha-green" : "text-ha-red"}`}>{p.change_fmt}</span>
+                          {p.intraday_vol_ratio != null && p.intraday_vol_ratio >= 2.5 && (
+                            <span className="ml-2 text-ha-amber">5m {p.intraday_vol_ratio.toFixed(1)}×</span>
+                          )}
                         </span>
                       </div>
                       <p className="text-[11px] text-ha-muted truncate mt-0.5">{p.line2}</p>
@@ -199,7 +202,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                     )}
                   </div>
                   {expanded && (
-                    <div className="px-3 pb-3 space-y-2 bg-black/20">
+                    <div className="px-3 pb-3 space-y-2 bg-ha-inset">
                       <p className="text-[11px] text-ha-muted">{p.line3}</p>
                       <div className="grid grid-cols-2 gap-2">
                         <label className="text-[11px] text-ha-muted">
@@ -208,7 +211,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                             value={fairDraft}
                             onChange={(e) => setFairDraft(e.target.value)}
                             inputMode="decimal"
-                            className="mt-1 w-full rounded-lg bg-[#111318] border border-ha-border px-2 py-2 text-sm"
+                            className="mt-1 w-full rounded-lg bg-ha-input border border-ha-border px-2 py-2 text-sm"
                           />
                         </label>
                         <label className="text-[11px] text-ha-muted">
@@ -217,7 +220,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                             value={usdDraft}
                             onChange={(e) => setUsdDraft(e.target.value)}
                             inputMode="decimal"
-                            className="mt-1 w-full rounded-lg bg-[#111318] border border-ha-border px-2 py-2 text-sm"
+                            className="mt-1 w-full rounded-lg bg-ha-input border border-ha-border px-2 py-2 text-sm"
                           />
                         </label>
                       </div>
@@ -226,11 +229,11 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                           type="button"
                           disabled={busy}
                           onClick={() => void saveRow(p)}
-                          className="rounded-lg bg-ha-accent px-3 py-2 text-sm text-black font-medium"
+                          className="rounded-lg bg-ha-accent px-3 py-2 text-sm text-ha-onaccent font-medium"
                         >
                           Guardar
                         </button>
-                        <button type="button" onClick={() => setConfirm(p.symbol)} className="rounded-lg bg-white/10 px-3 py-2 text-sm">
+                        <button type="button" onClick={() => setConfirm(p.symbol)} className="rounded-lg bg-ha-text/10 px-3 py-2 text-sm">
                           Quitar
                         </button>
                       </div>
@@ -245,11 +248,11 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
 
       {confirm && (
         <div className="fixed inset-0 z-20 bg-black/60 flex items-end justify-center p-4" onClick={() => setConfirm(null)}>
-          <div className="w-full max-w-md rounded-2xl bg-ha-card border border-ha-border p-4 mb-16" onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-md rounded-2xl bg-ha-card border border-ha-border p-4 mb-4" onClick={(e) => e.stopPropagation()}>
             <p className="font-medium">¿Quitar {confirm}?</p>
             <p className="text-sm text-ha-muted mt-1">Sale de las listas. Las cotizaciones del radar de macros no se tocan.</p>
             <div className="mt-4 flex gap-2">
-              <button type="button" onClick={() => setConfirm(null)} className="flex-1 rounded-lg bg-white/10 py-2.5 text-sm">
+              <button type="button" onClick={() => setConfirm(null)} className="flex-1 rounded-lg bg-ha-text/10 py-2.5 text-sm">
                 Cancelar
               </button>
               <button

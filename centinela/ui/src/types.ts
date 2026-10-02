@@ -61,10 +61,20 @@ export type Position = {
   ma200: number | null;
   ma50_delta_pct: number | null;
   volume_ratio: number | null;
+  intraday_vol_ratio?: number | null;
   week52_line: string;
   line2: string;
   line3: string;
   icon_color: string;
+};
+
+export type TickerPace = {
+  ticker: string;
+  comments: number;
+  last1h: number;
+  last3h: number;
+  velocity: number;
+  spike: boolean;
 };
 
 export type TickerHit = {
@@ -103,6 +113,9 @@ export type SocialRun = {
     bar_flat: string;
     note: string;
   };
+  windowHours?: number;
+  windowComments?: number;
+  tickers24h?: TickerPace[];
   storage: { keepDays: number; comments: number; oldestNyDay: string | null };
   errors: string[];
 };
@@ -137,7 +150,7 @@ export const regimeColor: Record<string, string> = {
 };
 
 export const verdictColor: Record<Idea["verdict"], string> = {
-  open: "bg-white/10 text-ha-muted",
+  open: "bg-ha-text/10 text-ha-muted",
   supported: "bg-ha-green/20 text-ha-green",
   refuted: "bg-ha-red/20 text-ha-red",
   mixed: "bg-ha-amber/20 text-ha-amber",

@@ -48,12 +48,12 @@ export function Ideas({ state, onReload }: { state: AppState; onReload: () => Pr
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Título"
-          className="w-full rounded-lg bg-[#111318] border border-ha-border px-3 py-2 text-sm"
+          className="w-full rounded-lg bg-ha-input border border-ha-border px-3 py-2 text-sm"
         />
         <select
           value={factor}
           onChange={(e) => setFactor(e.target.value)}
-          className="w-full rounded-lg bg-[#111318] border border-ha-border px-3 py-2 text-sm"
+          className="w-full rounded-lg bg-ha-input border border-ha-border px-3 py-2 text-sm"
         >
           {state.factors.map((f) => (
             <option key={f.id} value={f.id}>
@@ -66,9 +66,9 @@ export function Ideas({ state, onReload }: { state: AppState; onReload: () => Pr
           onChange={(e) => setClaim(e.target.value)}
           placeholder="Claim corto"
           rows={3}
-          className="w-full rounded-lg bg-[#111318] border border-ha-border px-3 py-2 text-sm"
+          className="w-full rounded-lg bg-ha-input border border-ha-border px-3 py-2 text-sm"
         />
-        <button disabled={busy} className="w-full rounded-lg bg-ha-accent py-2.5 text-sm text-black font-medium">
+        <button disabled={busy} className="w-full rounded-lg bg-ha-accent py-2.5 text-sm text-ha-onaccent font-medium">
           Guardar
         </button>
       </form>

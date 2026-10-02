@@ -173,6 +173,85 @@ async function quoteChart(symbol: string) {
   });
 }
 
+function persistIntraday(symbol: string, timestamps: number[], closes: (number | null)[], volumes: (number | null)[]) {
+  const ins = db.prepare(
+    `INSERT INTO quote_intraday (symbol, ts, close, volume) VALUES (?, ?, ?, ?)
+     ON CONFLICT(symbol, ts) DO UPDATE SET close=excluded.close, volume=excluded.volume`,
+  );
+  const tx = db.transaction(() => {
+    const n = Math.min(timestamps.length, closes.length, volumes.length);
+    for (let i = 0; i < n; i++) {
+      const close = closes[i];
+      if (typeof close !== "number") continue;
+      const vol = typeof volumes[i] === "number" ? (volumes[i] as number) : 0;
+      ins.run(symbol, new Date(timestamps[i] * 1000).toISOString(), close, vol);
+    }
+  });
+  tx();
+  const cutoff = new Date(Date.now() - 5 * 86400_000).toISOString();
+  db.prepare("DELETE FROM quote_intraday WHERE symbol = ? AND ts < ?").run(symbol, cutoff);
+}
+
+async function quoteIntraday(symbol: string) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=2d`;
+  const res = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(15000) });
+  if (res.status === 429) throw new Error("429");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const j = (await res.json()) as ChartJson;
+  const result = j.chart?.result?.[0];
+  if (!result) throw new Error(j.chart?.error?.description || "sin barras 5m");
+  const timestamps = result.timestamp ?? [];
+  const rawClose = result.indicators?.quote?.[0]?.close ?? [];
+  const rawVol = result.indicators?.quote?.[0]?.volume ?? [];
+  persistIntraday(symbol, timestamps, rawClose, rawVol);
+}
+
+export async function refreshIntraday(symbols: string[]): Promise<{ ok: number; errors: string[] }> {
+  const errors: string[] = [];
+  let ok = 0;
+  const unique = [...new Set(symbols)].filter(Boolean);
+  for (const symbol of unique) {
+    let done = false;
+    for (let attempt = 0; attempt < 3 && !done; attempt++) {
+      try {
+        await quoteIntraday(symbol);
+        ok++;
+        done = true;
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (msg.includes("429") && attempt < 2) {
+          await sleep(800 * (attempt + 1));
+          continue;
+        }
+        if (attempt === 2) errors.push(`${symbol} 5m: ${msg}`.slice(0, 100));
+      }
+    }
+    await sleep(80);
+  }
+  return { ok, errors: errors.slice(0, 10) };
+}
+
+/** Última vela 5m cerrada vs mediana de las ~4 h previas. */
+export function lastBarVolumeVsMedian(symbol: string): number | null {
+  const rows = db
+    .prepare("SELECT ts, volume FROM quote_intraday WHERE symbol = ? ORDER BY ts DESC LIMIT 80")
+    .all(symbol) as { ts: string; volume: number }[];
+  const bars = rows.filter((r) => r.volume > 0);
+  if (bars.length < 12) return null;
+  const live = Date.now() - Date.parse(bars[0].ts) < 4 * 60_000;
+  const series = live ? bars.slice(1) : bars;
+  if (series.length < 12) return null;
+  const last = series[0].volume;
+  const rest = series
+    .slice(1, 49)
+    .map((b) => b.volume)
+    .sort((a, b) => a - b);
+  if (!rest.length) return null;
+  const median = rest[Math.floor(rest.length / 2)];
+  if (median < 50) return null;
+  return last / median;
+}
+
 export async function refreshQuotes(symbols: string[]): Promise<{ ok: number; errors: string[] }> {
   const errors: string[] = [];
   let ok = 0;

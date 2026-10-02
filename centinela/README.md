@@ -1,6 +1,6 @@
 # Centinela (add-on)
 
-Radar de mercado. La UI abre en la **barra lateral** de Home Assistant (ingress, como Zigbee2MQTT). Los avisos van a Companion por MQTT.
+Radar de mercado. La UI abre en la **barra lateral** de Home Assistant (ingress, como Zigbee2MQTT). Los avisos van a Companion por MQTT (`centinela/notify` → paquete HA → `notify.notify`).
 
 Instalación: **Ajustes → Complementos → tienda → Repositorios** y añade:
 

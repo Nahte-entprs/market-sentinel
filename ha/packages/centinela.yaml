@@ -2,75 +2,45 @@
 # En configuration.yaml:
 #   homeassistant:
 #     packages: !include_dir_named packages
+#
+# Camino de avisos:
+#   Centinela publica MQTT centinela/notify (sección radar|cartera|reddit|ideas)
+#   → esta automation llama notify.notify (Companion)
+#   → el toque abre el panel ingress en la pestaña correcta.
+#
+# El puente HA es necesario: Companion no lee MQTT del add-on; se registra
+# como servicio notify.* en Home Assistant.
+#
+# Si el add-on no es "local" (instalado desde GitHub), cambia ADDON_SLUG
+# a algo como xxxxx_centinela (Ajustes → Complementos → Centinela → la URL
+# de ingress muestra el slug).
 
 automation:
-  - id: centinela_alert_companion
+  - id: centinela_notify_companion
     alias: "Centinela → Companion"
     mode: queued
-    max: 10
+    max: 12
     trigger:
       - platform: mqtt
-        topic: centinela/alert
-    condition:
-      - condition: template
-        value_template: "{{ (trigger.payload_json.score | default(0) | float) >= 6 }}"
+        topic: centinela/notify
+    variables:
+      addon_slug: local_centinela
+      section: "{{ trigger.payload_json.section | default('radar') }}"
+      panel: "/hassio/ingress/{{ addon_slug }}?tab={{ section }}"
     action:
       - service: notify.notify
         data:
-          title: "Centinela {{ trigger.payload_json.regime }} · {{ trigger.payload_json.score }}/10"
-          message: >
-            {{ trigger.payload_json.title }}
-
-            {% for w in trigger.payload_json.why[:6] %}✓ {{ w.text }}
-            {% endfor %}
-            Confianza {{ trigger.payload_json.confidence }}%. No es consejo financiero.
-          data:
-            url: /dashboard-centinela/radar
-            ttl: 0
-            priority: high
-
-  - id: centinela_ticker_companion
-    alias: "Centinela cartera → Companion"
-    mode: queued
-    max: 10
-    trigger:
-      - platform: mqtt
-        topic: centinela/ticker_alert
-    action:
-      - service: notify.notify
-        data:
-          title: "Centinela {{ trigger.payload_json.symbol }} · {{ trigger.payload_json.category }}"
+          title: "{{ trigger.payload_json.title }}"
           message: >
             {{ trigger.payload_json.message }}
-
-            No es consejo financiero.
           data:
-            url: /dashboard-centinela/cartera
+            url: "{{ panel }}"
+            clickAction: "{{ panel }}"
             ttl: 0
             priority: high
-
-  - id: centinela_digest_companion
-    alias: "Centinela digest → Companion"
-    mode: queued
-    trigger:
-      - platform: mqtt
-        topic: centinela/digest
-    action:
-      - service: notify.notify
-        data:
-          title: "Centinela briefing"
-          message: "{{ trigger.payload_json.text[:220] }}"
-
-  - id: centinela_crisis_companion
-    alias: "Centinela régimen CRISIS"
-    trigger:
-      - platform: mqtt
-        topic: centinela/regime
-    condition:
-      - condition: template
-        value_template: "{{ trigger.payload_json.regime == 'CRISIS' }}"
-    action:
-      - service: notify.notify
-        data:
-          title: "Centinela · CRISIS"
-          message: "Régimen CRISIS. Umbrales más sensibles. Revisa el dashboard."
+            tag: "centinela-{{ section }}"
+            group: "centinela-{{ section }}"
+            actions:
+              - action: URI
+                title: Abrir
+                uri: "{{ panel }}"

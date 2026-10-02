@@ -40,7 +40,7 @@ npm run dev
 ## Producción en HAOS
 
 1. Complemento **Mosquitto**. Anota usuario/clave.
-2. Tienda → repositorio `https://github.com/Nahte-entprs/market-sentinel` → **Centinela** → Instalar (versión **1.4.0** o superior).
+2. Tienda → repositorio `https://github.com/Nahte-entprs/market-sentinel` → **Centinela** → Instalar (versión **1.5.0** o superior).
 3. Opciones: `mqtt_url: mqtt://core-mosquitto:1883`, usuario/clave, `TZ=America/Santiago`.
 4. Arranca el add-on. En su ficha activa **Mostrar en la barra lateral**. Abre **Centinela** (Radar, Cartera, Reddit, Ideas). No hace falta pegar Lovelace.
 5. En `configuration.yaml`:

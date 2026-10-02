@@ -2,8 +2,9 @@ import { db, id, json, nowIso, parseJson, getMeta, setMeta } from "./db.ts";
 import { cooldownMs, currentRegime, scoreThreshold, suppressPush } from "./regime.ts";
 import { isQuietHours } from "./config.ts";
 import { templateSummarize, maybeEnrich } from "./summarizer.ts";
-import { publishAlert, publishEnrich, publishDigest, publishTickerAlert } from "./mqtt.ts";
+import { publishAlert, publishDigest, publishEnrich, publishNotify, publishTickerAlert, notifyUrl } from "./mqtt.ts";
 import type { AlertRecord, Candidate, Regime, TickerAlert } from "./types.ts";
+import type { SocialRun } from "./reddit-social.ts";
 
 export function lastAlert(): AlertRecord | null {
   const r = db.prepare("SELECT * FROM alerts ORDER BY created_at DESC LIMIT 1").get() as Record<string, unknown> | undefined;
@@ -126,6 +127,43 @@ export function maybePushTickerWatch(alert: TickerAlert): boolean {
   if (isQuietHours() && alert.category !== "holding" && !steep) return false;
   setMeta(`ticker_watch_${alert.symbol}`, nowIso());
   publishTickerAlert(alert);
+  return true;
+}
+
+export function maybePushReddit(run: SocialRun): boolean {
+  const spikes = (run.tickers24h ?? []).filter((t) => t.spike).slice(0, 4);
+  if (!spikes.length) return false;
+  const last = getMeta(`reddit_spike_${run.source}`);
+  if (last && Date.now() - Date.parse(last) < cooldownMs()) return false;
+  const huge = spikes.some((s) => s.last1h >= 15);
+  if (isQuietHours() && !huge) return false;
+  setMeta(`reddit_spike_${run.source}`, nowIso());
+  const title = `Reddit · ${spikes.map((s) => s.ticker).join(", ")}`;
+  const message = spikes
+    .map((s) => `${s.ticker}: ${s.comments} en 24h, ${s.last1h} última hora (×${s.velocity.toFixed(1)})`)
+    .join(" · ");
+  publishNotify({
+    section: "reddit",
+    title,
+    message: `${message}. No es consejo financiero.`,
+    url: notifyUrl("reddit"),
+    at: nowIso(),
+  });
+  return true;
+}
+
+export function maybePushCrisis(regime: Regime): boolean {
+  if (regime !== "CRISIS") return false;
+  const last = getMeta("regime_crisis_push");
+  if (last && Date.now() - Date.parse(last) < 6 * 3600_000) return false;
+  setMeta("regime_crisis_push", nowIso());
+  publishNotify({
+    section: "radar",
+    title: "Centinela · CRISIS",
+    message: "Régimen CRISIS. Umbrales más sensibles. Revisa el radar.",
+    url: notifyUrl("radar"),
+    at: nowIso(),
+  });
   return true;
 }
 

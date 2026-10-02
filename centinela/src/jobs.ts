@@ -1,12 +1,12 @@
 import { db, json, nowIso, parseJson, getSetting } from "./db.ts";
 import { isRth } from "./config.ts";
 import { listFactors, listIdeas, listTickers } from "./universe.ts";
-import { allQuoteSymbols, allQuotes, getQuote, refreshQuotes, refreshFundamentals, threeDayTrend } from "./quotes.ts";
+import { allQuoteSymbols, allQuotes, getQuote, lastBarVolumeVsMedian, refreshQuotes, refreshFundamentals, refreshIntraday, threeDayTrend } from "./quotes.ts";
+import { emitIfNeeded, lastAlert, lastDigest, listAlerts, maybePushCrisis, maybePushReddit, maybePushTickerWatch, saveDigest } from "./alerts.ts";
 import { ingestFeeds, recentNews } from "./news.ts";
 import { extractEntities, lexiconPolarity, matchThesis } from "./entities.ts";
 import { tickersFromEntities } from "./graph.ts";
 import { computeRegime, confidenceFrom, currentRegime, scoreThreshold } from "./regime.ts";
-import { emitIfNeeded, lastAlert, lastDigest, listAlerts, maybePushTickerWatch, saveDigest } from "./alerts.ts";
 import { collectOtherSubs, collectWsbDaily, ensureRedditTables } from "./reddit-social.ts";
 import { publishIdeas, publishJob, publishRegime, publishSocial, publishStatus } from "./mqtt.ts";
 import { listPositions, publishCarteraState } from "./portfolio.ts";
@@ -53,9 +53,13 @@ function jobInfo(def: JobDef): JobInfo {
 
 async function quotesJob() {
   const r = await refreshQuotes(allQuoteSymbols());
+  const intra = await refreshIntraday(listTickers("ticker").map((t) => t.symbol));
   publishCarteraState();
   if (r.errors.length && r.ok === 0) throw new Error(r.errors[0]);
-  return `${r.ok} cotizaciones` + (r.errors.length ? ` (${r.errors.length} errores)` : "");
+  const bits = [`${r.ok} cotizaciones`];
+  if (intra.ok) bits.push(`${intra.ok} barras 5m`);
+  if (r.errors.length || intra.errors.length) bits.push(`(${r.errors.length + intra.errors.length} errores)`);
+  return bits.join(" · ");
 }
 
 async function fundamentalsJob() {
@@ -65,10 +69,10 @@ async function fundamentalsJob() {
   return `${r.ok} fundamentals` + (r.errors.length ? ` (${r.errors.length} errores)` : "");
 }
 
-const TICKER_WATCH: Record<TickerCategory, { changePct: number; volumeRatio: number; trendPct: number }> = {
-  holding: { changePct: 2, volumeRatio: 2, trendPct: 4 },
-  priority: { changePct: 2, volumeRatio: 2, trendPct: 5 },
-  watchlist: { changePct: 3.5, volumeRatio: 2.5, trendPct: 8 },
+const TICKER_WATCH: Record<TickerCategory, { changePct: number; volumeRatio: number; trendPct: number; intradayVolumeRatio: number }> = {
+  holding: { changePct: 2, volumeRatio: 2, trendPct: 4, intradayVolumeRatio: 3.5 },
+  priority: { changePct: 2, volumeRatio: 2, trendPct: 5, intradayVolumeRatio: 3.5 },
+  watchlist: { changePct: 3.5, volumeRatio: 2.5, trendPct: 8, intradayVolumeRatio: 4.5 },
 };
 
 function whyPriceVol(symbol: string): WhyItem[] {
@@ -84,9 +88,17 @@ function whyPriceVol(symbol: string): WhyItem[] {
   }
   if (q.volumeRatio >= 2.5) {
     items.push({
-      text: `volumen ${q.volumeRatio.toFixed(1)}× promedio`,
+      text: `volumen ${q.volumeRatio.toFixed(1)}× promedio diario`,
       kind: "volume",
       weight: q.volumeRatio >= 4 ? 3 : 2,
+    });
+  }
+  const intra = lastBarVolumeVsMedian(symbol);
+  if (intra && intra >= 3) {
+    items.push({
+      text: `volumen 5m ${intra.toFixed(1)}× mediana reciente`,
+      kind: "volume",
+      weight: intra >= 5 ? 3 : 2,
     });
   }
   return items;
@@ -137,7 +149,11 @@ async function volumeJob() {
       reasons.push(`${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% en el día`);
     }
     if (q.volumeRatio >= thresh.volumeRatio) {
-      reasons.push(`volumen ${q.volumeRatio.toFixed(1)}×`);
+      reasons.push(`volumen diario ${q.volumeRatio.toFixed(1)}×`);
+    }
+    const intra = lastBarVolumeVsMedian(t.symbol);
+    if (intra && intra >= thresh.intradayVolumeRatio) {
+      reasons.push(`volumen 5m ${intra.toFixed(1)}× mediana`);
     }
     const trend = threeDayTrend(t.symbol);
     if (trend && Math.abs(trend.pct) >= thresh.trendPct) {
@@ -151,7 +167,7 @@ async function volumeJob() {
       title: `${t.symbol} · ${t.category}`,
       message: `${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% · ${reasons.join(" · ")}`,
       changePct: q.changePct,
-      volumeRatio: q.volumeRatio,
+      volumeRatio: Math.max(q.volumeRatio, intra ?? 0),
       reasons,
       at: nowIso(),
     });
@@ -405,9 +421,10 @@ async function redditJob() {
   const run = await collectWsbDaily();
   saveSocialRun(run);
   publishSocial(run);
-  const top = run.emerging.map((e) => e.ticker).join(",") || "none";
+  const pushed = maybePushReddit(run);
+  const top = (run.tickers24h[0]?.ticker ?? run.emerging[0]?.ticker) || "none";
   const err = run.errors.length ? `; ${run.errors[0].slice(0, 80)}` : "";
-  const note = `daily ${run.comments} cmt · emerging ${top}${err}`;
+  const note = `24h ${run.windowComments} cmt · ${run.tickers24h.length} tkr · ${top}${pushed ? " · aviso" : ""}${err}`;
   console.log(`[job] reddit.rising ${note}`);
   return note;
 }
@@ -417,9 +434,10 @@ async function redditSubsJob() {
   const run = await collectOtherSubs();
   saveSocialRun(run);
   publishSocial(run);
-  const top = run.emerging.map((e) => e.ticker).join(",") || "none";
+  const pushed = maybePushReddit(run);
+  const top = (run.tickers24h[0]?.ticker ?? run.emerging[0]?.ticker) || "none";
   const err = run.errors.length ? `; ${run.errors.length} sub error` : "";
-  const note = `subs ${run.comments} cmt · emerging ${top}${err}`;
+  const note = `24h ${run.windowComments} cmt · ${run.tickers24h.length} tkr · ${top}${pushed ? " · aviso" : ""}${err}`;
   console.log(`[job] reddit.subs ${note}`);
   return note;
 }
@@ -427,6 +445,7 @@ async function redditSubsJob() {
 async function regimeJob() {
   const r = computeRegime();
   publishRegime(r, parseJson(getSetting("regime_why", "{}"), {}));
+  maybePushCrisis(r);
   publishCarteraState();
   publishIdeas(mappedIdeas());
   publishStatus({ regime: r, jobs: JOBS.length });
@@ -591,7 +610,7 @@ export const JOBS: JobDef[] = [
     id: "volume.unusual",
     letter: "D",
     name: "Volumen inusual",
-    description: "Radar + vigilante de cartera (precio, volumen, 3d)",
+    description: "Radar + vigilante de cartera (precio, volumen diario y 5m, 3d)",
     cadenceMs: () => (isRth() ? 5 : 15) * 60_000,
     run: volumeJob,
   },
@@ -599,14 +618,14 @@ export const JOBS: JobDef[] = [
     id: "reddit.rising",
     letter: "E",
     name: "WSB daily",
-    description: "Comentarios del daily: emergentes vs staples",
+    description: "WSB últimas 24 h: ritmo, picos y comentarios",
     cadenceMs: () => 15 * 60_000,
     run: redditJob,
   },
   {
     id: "reddit.subs",
     name: "Reddit subs",
-    description: "stocks, pennystocks, investing, etc.",
+    description: "Otros subs, mismas 24 h: ritmo y comentarios",
     cadenceMs: () => 20 * 60_000,
     run: redditSubsJob,
   },

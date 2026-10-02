@@ -116,6 +116,7 @@ export type CarteraPosition = {
   ma200: number | null;
   ma50_delta_pct: number | null;
   volume_ratio: number | null;
+  intraday_vol_ratio: number | null;
   week52_high: number | null;
   week52_low: number | null;
   week52_pos: number | null;
@@ -136,6 +137,25 @@ export type TickerAlert = {
   volumeRatio: number;
   reasons: string[];
   at: string;
+};
+
+export type NotifySection = "radar" | "cartera" | "reddit" | "ideas";
+
+export type CentinelaNotify = {
+  section: NotifySection;
+  title: string;
+  message: string;
+  url: string;
+  at: string;
+};
+
+export type TickerPace = {
+  ticker: string;
+  comments: number;
+  last1h: number;
+  last3h: number;
+  velocity: number;
+  spike: boolean;
 };
 
 export type NewsItem = {

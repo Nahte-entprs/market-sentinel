@@ -1,6 +1,6 @@
 import mqtt from "mqtt";
 import { config } from "./config.ts";
-import type { AlertRecord, CarteraPosition, IdeaRecord, JobInfo, Regime, TickerAlert } from "./types.ts";
+import type { AlertRecord, CarteraPosition, CentinelaNotify, IdeaRecord, JobInfo, NotifySection, Regime, TickerAlert } from "./types.ts";
 import type { SocialRun } from "./reddit-social.ts";
 
 export type MqttDrafts = {
@@ -170,6 +170,12 @@ function publishDiscovery() {
     json_attributes_topic: `${PREFIX}/sensor/reddit_emerging_attr`,
     icon: "mdi:chart-timeline-variant",
   });
+  disc("sensor", "last_notify", {
+    name: "Último aviso",
+    state_topic: `${PREFIX}/sensor/last_notify`,
+    json_attributes_topic: `${PREFIX}/sensor/last_notify_attr`,
+    icon: "mdi:cellphone-message",
+  });
   disc("text", "nuevo_ticker", {
     name: "Nuevo ticker",
     command_topic: `${PREFIX}/cmd/ticker_draft`,
@@ -299,12 +305,36 @@ function pub(topic: string, payload: string | Record<string, unknown>, retain = 
   client.publish(topic, body, { retain });
 }
 
+export function notifyUrl(section: NotifySection) {
+  return `/hassio/ingress/local_centinela?tab=${section}`;
+}
+
+export function publishNotify(n: CentinelaNotify) {
+  pub(`${PREFIX}/notify`, n, false);
+  pub(`${PREFIX}/sensor/last_notify`, n.title.slice(0, 255));
+  pub(`${PREFIX}/sensor/last_notify_attr`, n);
+}
+
+function sectionOfAlert(alert: AlertRecord): NotifySection {
+  if (alert.jobIds.includes("ideas.eval")) return "ideas";
+  if (alert.jobIds.some((id) => id.startsWith("reddit"))) return "reddit";
+  return "radar";
+}
+
 export function publishAlert(alert: AlertRecord) {
   pub(`${PREFIX}/alert`, alert, false);
   pub(`${PREFIX}/sensor/last_alert`, alert.title.slice(0, 255));
   pub(`${PREFIX}/sensor/last_alert_attr`, {
     ...alert,
     friendly_why: alert.why.map((w) => w.text),
+  });
+  const section = sectionOfAlert(alert);
+  publishNotify({
+    section,
+    title: alert.title,
+    message: alert.summary.slice(0, 280),
+    url: notifyUrl(section),
+    at: alert.createdAt,
   });
 }
 
@@ -313,9 +343,17 @@ export function publishEnrich(id: string, text: string) {
 }
 
 export function publishDigest(text: string) {
-  pub(`${PREFIX}/digest`, { text, at: new Date().toISOString() }, false);
+  const at = new Date().toISOString();
+  pub(`${PREFIX}/digest`, { text, at }, false);
   pub(`${PREFIX}/sensor/digest`, text.slice(0, 255));
   pub(`${PREFIX}/sensor/digest_attr`, { text });
+  publishNotify({
+    section: "radar",
+    title: "Centinela briefing",
+    message: text.slice(0, 220),
+    url: notifyUrl("radar"),
+    at,
+  });
 }
 
 export function publishRegime(regime: Regime, extra?: Record<string, unknown>) {
@@ -344,6 +382,13 @@ export function publishCartera(lists: {
 
 export function publishTickerAlert(alert: TickerAlert) {
   pub(`${PREFIX}/ticker_alert`, alert, false);
+  publishNotify({
+    section: "cartera",
+    title: alert.title,
+    message: alert.message,
+    url: notifyUrl("cartera"),
+    at: alert.at,
+  });
 }
 
 export function publishIdeas(ideas: IdeaRecord[]) {
@@ -359,6 +404,9 @@ export function publishSocial(run: SocialRun) {
     thread_kind: run.threadKind,
     schedule: run.schedule,
     comments: run.comments,
+    window_hours: run.windowHours,
+    window_comments: run.windowComments,
+    tickers_24h: run.tickers24h,
     emerging: run.emerging,
     emerging_by_sub: run.emergingBySub,
     staples: run.staples,
@@ -370,7 +418,11 @@ export function publishSocial(run: SocialRun) {
   };
   const key = run.source === "wsb_daily" ? "reddit_wsb" : "reddit_subs";
   const sent = run.sentiment;
-  pub(`${PREFIX}/sensor/${key}`, `${run.comments} cmt · ${run.emerging.length} em · B${sent.bull}/R${sent.bear}`);
+  const spikes = (run.tickers24h ?? []).filter((t) => t.spike).length;
+  pub(
+    `${PREFIX}/sensor/${key}`,
+    `${run.windowComments ?? run.comments} cmt 24h · ${(run.tickers24h ?? []).length} tkr · ${spikes} pico · B${sent.bull}/R${sent.bear}`,
+  );
   pub(`${PREFIX}/sensor/${key}_attr`, attr);
   pub(`${PREFIX}/sensor/reddit_emerging`, top);
   pub(`${PREFIX}/sensor/reddit_emerging_attr`, {

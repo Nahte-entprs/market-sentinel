@@ -80,6 +80,14 @@ CREATE TABLE IF NOT EXISTS quote_bars (
   PRIMARY KEY (symbol, date)
 );
 
+CREATE TABLE IF NOT EXISTS quote_intraday (
+  symbol TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  close REAL NOT NULL,
+  volume INTEGER NOT NULL,
+  PRIMARY KEY (symbol, ts)
+);
+
 CREATE TABLE IF NOT EXISTS news (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,

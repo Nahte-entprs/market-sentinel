@@ -83,7 +83,7 @@ export function Radar({ state, onReload }: { state: AppState; onReload: () => Pr
         <h2 className="text-xs text-ha-muted mb-3">Tareas</h2>
         <div className="space-y-2">
           {jobs.map((job) => (
-            <div key={job.id} className="flex items-start justify-between gap-2 rounded-xl border border-ha-border bg-black/20 p-3">
+            <div key={job.id} className="flex items-start justify-between gap-2 rounded-xl border border-ha-border bg-ha-inset p-3">
               <div className="min-w-0">
                 <p className="font-medium text-sm">
                   {job.letter ? `${job.letter}. ` : ""}
@@ -113,7 +113,7 @@ export function Radar({ state, onReload }: { state: AppState; onReload: () => Pr
                 type="button"
                 onClick={() => void run(job.id)}
                 disabled={busy === job.id}
-                className="shrink-0 rounded-lg bg-white/10 px-2 py-1 text-xs hover:bg-white/20"
+                className="shrink-0 rounded-lg bg-ha-text/10 px-2 py-1 text-xs hover:bg-ha-text/20"
               >
                 Run
               </button>
