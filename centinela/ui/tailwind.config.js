@@ -1,6 +1,11 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const dir = path.dirname(fileURLToPath(import.meta.url)).replaceAll("\\", "/");
+
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  content: [`${dir}/index.html`, `${dir}/src/**/*.{ts,tsx}`],
   theme: {
     extend: {
       colors: {
@@ -17,7 +22,7 @@ export default {
         },
       },
       fontFamily: {
-        sans: ["Roboto", "system-ui", "sans-serif"],
+        sans: ["system-ui", "Segoe UI", "Roboto", "sans-serif"],
       },
     },
   },

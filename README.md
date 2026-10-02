@@ -1,6 +1,6 @@
 # Centinela — radar de mercado para Home Assistant OS
 
-Centinela vigila cotizaciones, noticias, macros y Reddit **en loop**, sin gastar tokens. En el mini PC **no hay web aparte**: ves y editas todo en un dashboard de Lovelace (Mushroom o cards nativas).
+Centinela vigila cotizaciones, noticias, macros y Reddit **en loop**, sin gastar tokens. En el G3 ves y editas todo en la **barra lateral** de Home Assistant (panel del add-on, como Zigbee2MQTT). Los avisos llegan a Companion.
 
 No es consejo financiero. No es un chatbot ni un broker.
 
@@ -22,8 +22,8 @@ El `Dockerfile` lo usa Supervisor al instalar; no hace falta Docker ni Portainer
 
 ## Dos máquinas
 
-- **Cursor / tu PC:** desarrollas y (si quieres) ves la maqueta Lovelace con `npm run dev`.
-- **G3 Plus (HAOS):** add-on Centinela + Mosquitto + dashboard Lovelace + avisos Companion.
+- **Cursor / tu PC:** `npm run dev` — worker + UI (http://127.0.0.1:38447).
+- **G3 Plus (HAOS):** add-on Centinela + Mosquitto + **Mostrar en la barra lateral** + avisos Companion.
 
 ## Desarrollo (PC o cloud)
 
@@ -35,14 +35,14 @@ npm run dev
 ```
 
 - Worker: `http://127.0.0.1:18765`
-- Maqueta: `http://127.0.0.1:38447` (banner ámbar: *no es producción*)
+- UI: `http://127.0.0.1:38447` (misma app que en HA, con proxy al worker)
 
 ## Producción en HAOS
 
-1. HACS → **Mushroom** y **auto-entities** (para la pestaña Cartera; hay [`ha/lovelace/centinela-native.yaml`](ha/lovelace/centinela-native.yaml) sin custom cards).
-2. Complemento **Mosquitto**. Anota usuario/clave.
-3. Tienda → repositorio `https://github.com/Nahte-entprs/market-sentinel` → **Centinela** → Instalar.
-4. Opciones: `mqtt_url: mqtt://core-mosquitto:1883`, usuario/clave, `TZ=America/Santiago`.
+1. Complemento **Mosquitto**. Anota usuario/clave.
+2. Tienda → repositorio `https://github.com/Nahte-entprs/market-sentinel` → **Centinela** → Instalar (versión **1.4.0** o superior).
+3. Opciones: `mqtt_url: mqtt://core-mosquitto:1883`, usuario/clave, `TZ=America/Santiago`.
+4. Arranca el add-on. En su ficha activa **Mostrar en la barra lateral**. Abre **Centinela** (Radar, Cartera, Reddit, Ideas). No hace falta pegar Lovelace.
 5. En `configuration.yaml`:
 
 ```yaml
@@ -50,14 +50,13 @@ homeassistant:
   packages: !include_dir_named packages
 ```
 
-   Copia [`ha/packages/centinela.yaml`](ha/packages/centinela.yaml) a `/config/packages/`.
-6. Nuevo dashboard: pega [`ha/lovelace/centinela.yaml`](ha/lovelace/centinela.yaml) o [`ha/lovelace/centinela-native.yaml`](ha/lovelace/centinela-native.yaml).
-7. Arranca el add-on. Debe aparecer el dispositivo **Centinela** (MQTT).
-8. Tickers e ideas en Lovelace. Cartera: Holding / Priority / Watchlist (fair manual, ratings Yahoo). Los avisos van a la app **Companion**.
+   Copia [`ha/packages/centinela.yaml`](ha/packages/centinela.yaml) a `/config/packages/` para que Companion reciba avisos (radar + cartera).
 
-Tras actualizar el complemento, vuelve a pegar el YAML de Lovelace y copia de nuevo [`ha/packages/centinela.yaml`](ha/packages/centinela.yaml) (incluye avisos de cartera).
+El puerto **8099** es interno del contenedor (ingress). No choca con Zigbee2MQTT: cada add-on tiene el suyo. No publiques 8099 en el host.
 
-Node-RED es opcional ([`nodered/centinela.json`](nodered/centinela.json)). El add-on **no publica puerto de UI**.
+MQTT sigue creando `sensor.centinela_*` por si quieres vistas Lovelace sueltas ([`ha/lovelace/centinela.yaml`](ha/lovelace/centinela.yaml) es opcional).
+
+Node-RED es opcional ([`nodered/centinela.json`](nodered/centinela.json)).
 
 ## Tareas (una a la vez)
 
@@ -86,7 +85,7 @@ en las opciones del add-on. Ventana de 10 min; si no hay modelo, no pasa nada.
 ## Extender
 
 - Nueva tarea: [`centinela/src/jobs.ts`](centinela/src/jobs.ts) (registro `JOBS`).
-- Ticker o idea: dashboard HA, sin reinstalar.
+- Ticker o idea: panel del add-on (barra lateral), sin reinstalar.
 - Grafo / tesis / feeds: [`centinela/data/event-graph.json`](centinela/data/event-graph.json), [`centinela/data/thesis.json`](centinela/data/thesis.json), [`centinela/data/feeds.json`](centinela/data/feeds.json).
 
 ## Hardware

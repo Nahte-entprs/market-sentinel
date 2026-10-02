@@ -7,7 +7,8 @@ export MQTT_PASSWORD="$(bashio::config 'mqtt_password')"
 export TZ="$(bashio::config 'tz')"
 export LLAMA_SERVER_URL="$(bashio::config 'llama_server_url')"
 export REMOTE_WORKER_URL="$(bashio::config 'remote_worker_url')"
-export PREVIEW_UI=false
+export PREVIEW_UI=true
+export API_PORT=8099
 export CENTINELA_DATA=/data
 
 cd /app

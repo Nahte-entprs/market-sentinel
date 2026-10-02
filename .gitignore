@@ -1,6 +1,7 @@
 node_modules
 dist
 preview/dist
+centinela/ui/dist
 data/centinela.db
 data/centinela.db-wal
 data/centinela.db-shm

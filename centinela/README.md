@@ -1,9 +1,9 @@
 # Centinela (add-on)
 
-Radar de mercado headless. La UI es un dashboard Lovelace, no este complemento.
+Radar de mercado. La UI abre en la **barra lateral** de Home Assistant (ingress, como Zigbee2MQTT). Los avisos van a Companion por MQTT.
 
-Instalación: en Home Assistant, **Ajustes → Complementos → tienda → Repositorios** y añade:
+Instalación: **Ajustes → Complementos → tienda → Repositorios** y añade:
 
 `https://github.com/Nahte-entprs/market-sentinel`
 
-Luego instala **Centinela**. No copies el repo a `/addons`.
+Instala **Centinela**, arráncalo, y en la ficha del complemento activa **Mostrar en la barra lateral**.

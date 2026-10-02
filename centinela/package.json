@@ -3,14 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Radar de mercado portable para Home Assistant OS. Motor headless; UI en Lovelace.",
+  "description": "Radar de mercado para Home Assistant OS. UI por ingress; avisos MQTT.",
   "scripts": {
     "dev": "PREVIEW_UI=true concurrently -k -n worker,ui -c cyan,magenta \"npm run dev:worker\" \"npm run dev:ui\"",
     "dev:worker": "PREVIEW_UI=true API_PORT=18765 tsx watch src/index.ts",
-    "dev:ui": "vite --config ../preview/vite.config.ts --host 0.0.0.0 --port 38447",
+    "dev:ui": "vite --config ui/vite.config.ts --host 0.0.0.0 --port 38447",
     "start": "tsx src/index.ts",
-    "start:preview": "PREVIEW_UI=true tsx src/index.ts",
-    "build:ui": "vite build --config ../preview/vite.config.ts",
+    "start:preview": "PREVIEW_UI=true API_PORT=18765 tsx src/index.ts",
+    "build:ui": "vite build --config ui/vite.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "engines": {

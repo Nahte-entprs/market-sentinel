@@ -91,5 +91,5 @@ startScheduler();
 refreshCartera();
 
 console.log(
-  `[centinela] arranque · TZ=${config.tz} · preview=${config.previewUi} · mqtt=${config.mqttUrl || "off"} · jobs=${listJobs().length}`,
+  `[centinela] arranque · TZ=${config.tz} · ui=${config.previewUi} · mqtt=${config.mqttUrl || "off"} · jobs=${listJobs().length}`,
 );

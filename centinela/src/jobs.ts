@@ -10,6 +10,7 @@ import { emitIfNeeded, lastAlert, lastDigest, listAlerts, maybePushTickerWatch, 
 import { collectOtherSubs, collectWsbDaily, ensureRedditTables } from "./reddit-social.ts";
 import { publishIdeas, publishJob, publishRegime, publishSocial, publishStatus } from "./mqtt.ts";
 import { listPositions, publishCarteraState } from "./portfolio.ts";
+import { loadSocialRun, saveSocialRun } from "./social-store.ts";
 import type { Candidate, IdeaRecord, JobInfo, JobStatus, TickerCategory, WhyItem } from "./types.ts";
 
 type JobDef = {
@@ -402,6 +403,7 @@ async function sentimentJob() {
 async function redditJob() {
   ensureRedditTables();
   const run = await collectWsbDaily();
+  saveSocialRun(run);
   publishSocial(run);
   const top = run.emerging.map((e) => e.ticker).join(",") || "none";
   const err = run.errors.length ? `; ${run.errors[0].slice(0, 80)}` : "";
@@ -413,6 +415,7 @@ async function redditJob() {
 async function redditSubsJob() {
   ensureRedditTables();
   const run = await collectOtherSubs();
+  saveSocialRun(run);
   publishSocial(run);
   const top = run.emerging.map((e) => e.ticker).join(",") || "none";
   const err = run.errors.length ? `; ${run.errors.length} sub error` : "";
@@ -685,8 +688,12 @@ export function getState() {
     digest: digest.text?.value ?? null,
     digestAt: digest.at?.value ?? null,
     news: recentNews(12, 25),
+    reddit: {
+      wsb: loadSocialRun("wsb"),
+      subs: loadSocialRun("subs"),
+    },
     graphHint: "Iran → oil/hormuz → SMH/MU",
     disclaimer: "No es consejo financiero. Datos delayed. Centinela es un radar, no un broker.",
-    preview: true,
+    ingress: true,
   };
 }
