@@ -206,6 +206,9 @@ ensureColumn("quotes", "rec_key", "rec_key TEXT");
 ensureColumn("quotes", "analyst_count", "analyst_count INTEGER");
 ensureColumn("quotes", "week52_high", "week52_high REAL");
 ensureColumn("quotes", "week52_low", "week52_low REAL");
+ensureColumn("reddit_comments", "author", "author TEXT NOT NULL DEFAULT ''");
+ensureColumn("reddit_comments", "author_flair", "author_flair TEXT NOT NULL DEFAULT ''");
+ensureColumn("reddit_comments", "post_title", "post_title TEXT NOT NULL DEFAULT ''");
 
 export function nowIso() {
   return new Date().toISOString();

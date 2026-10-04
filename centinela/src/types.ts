@@ -156,6 +156,8 @@ export type TickerPace = {
   last3h: number;
   velocity: number;
   spike: boolean;
+  trend: "up" | "flat" | "down";
+  paceDelta: number;
 };
 
 export type NewsItem = {

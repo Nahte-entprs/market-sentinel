@@ -25,6 +25,9 @@ export type AppSettings = {
     velocityQuietHour: number;
     velocityBurst1h: number;
     alertLast1h: number;
+    surgeUpRatio: number;
+    surgeDownRatio: number;
+    surgeMinGap: number;
   };
   cartera: {
     holding: WatchBand;
@@ -84,6 +87,9 @@ const DEFAULTS: AppSettings = {
     velocityQuietHour: 0.4,
     velocityBurst1h: 5,
     alertLast1h: 15,
+    surgeUpRatio: 1.4,
+    surgeDownRatio: 0.7,
+    surgeMinGap: 1,
   },
   cartera: {
     holding: { changePct: 2, volumeRatio: 2, trendPct: 4, intradayVolumeRatio: 3.5 },
@@ -179,6 +185,9 @@ export function normalizeSettings(raw: unknown): AppSettings {
       velocityQuietHour: num(r.velocityQuietHour, d.reddit.velocityQuietHour, 0.05, 20),
       velocityBurst1h: num(r.velocityBurst1h, d.reddit.velocityBurst1h, 1, 100),
       alertLast1h: num(r.alertLast1h, d.reddit.alertLast1h, 1, 300),
+      surgeUpRatio: num(r.surgeUpRatio, d.reddit.surgeUpRatio, 1.05, 6),
+      surgeDownRatio: num(r.surgeDownRatio, d.reddit.surgeDownRatio, 0.05, 0.95),
+      surgeMinGap: num(r.surgeMinGap, d.reddit.surgeMinGap, 0, 30),
     },
     cartera: {
       holding: band(c.holding, d.cartera.holding),

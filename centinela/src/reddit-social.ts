@@ -87,6 +87,7 @@ type ListingChild = {
     score?: number;
     created_utc?: number;
     author?: string;
+    author_flair_text?: string | null;
     stickied?: boolean;
     replies?: Listing | string;
   };
@@ -291,11 +292,17 @@ function roleOf(ticker: string): TickerHit["role"] {
   return "emerging";
 }
 
-function flattenComments(
-  listing: Listing | undefined,
-  cap: number,
-): { id: string; body: string; score: number; author: string; created: number }[] {
-  const out: { id: string; body: string; score: number; author: string; created: number }[] = [];
+type PulledComment = {
+  id: string;
+  body: string;
+  score: number;
+  author: string;
+  authorFlair: string;
+  created: number;
+};
+
+function flattenComments(listing: Listing | undefined, cap: number): PulledComment[] {
+  const out: PulledComment[] = [];
   const walk = (node: Listing | undefined) => {
     if (!node || out.length >= cap) return;
     for (const child of node.data?.children ?? []) {
@@ -308,6 +315,7 @@ function flattenComments(
           body: d.body,
           score: Number(d.score ?? 0),
           author: d.author ?? "",
+          authorFlair: (d.author_flair_text ?? "").replace(/\s+/g, " ").trim().slice(0, 80),
           created: Number(d.created_utc ?? 0),
         });
       }
@@ -328,9 +336,16 @@ async function fetchComments(sub: string, id: string, limit: number, sort: "new"
   return flattenComments(j[1], limit);
 }
 
-type RawCmt = { id?: string; body?: string; author?: string; score?: number; created_utc?: number };
+type RawCmt = {
+  id?: string;
+  body?: string;
+  author?: string;
+  author_flair_text?: string | null;
+  score?: number;
+  created_utc?: number;
+};
 
-async function fetchArchiveComments(sub: string, size: number): Promise<{ id: string; body: string; score: number; author: string; created: number }[]> {
+async function fetchArchiveComments(sub: string, size: number): Promise<PulledComment[]> {
   const n = Math.min(Math.max(size, 25), 100);
   const urls = [
     `https://api.pullpush.io/reddit/search/comment/?subreddit=${encodeURIComponent(sub)}&size=${n}&sort=desc`,
@@ -365,6 +380,7 @@ async function fetchArchiveComments(sub: string, size: number): Promise<{ id: st
           body: String(o.body ?? ""),
           score: Number(o.score ?? 0),
           author: String(o.author ?? ""),
+          authorFlair: String(o.author_flair_text ?? "").replace(/\s+/g, " ").trim().slice(0, 80),
           created: Number(o.created_utc ?? 0),
         }))
         .filter((c) => c.id && c.body);
@@ -382,6 +398,9 @@ function persistComment(row: {
   kind: string;
   body: string;
   score: number;
+  author: string;
+  authorFlair: string;
+  postTitle: string;
   created: string;
   nyDay: string;
   flag: CheapFlag;
@@ -389,13 +408,16 @@ function persistComment(row: {
   capturedAt: string;
 }) {
   db.prepare(
-    `INSERT INTO reddit_comments (id, sub, thread_id, kind, body, score, created_utc, cheap_flag, body_key, captured_at, ny_day)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO reddit_comments (id, sub, thread_id, kind, body, score, created_utc, cheap_flag, body_key, captured_at, ny_day, author, author_flair, post_title)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        score=excluded.score,
        cheap_flag=excluded.cheap_flag,
        body=excluded.body,
-       ny_day=excluded.ny_day`,
+       ny_day=excluded.ny_day,
+       author=CASE WHEN excluded.author != '' THEN excluded.author ELSE reddit_comments.author END,
+       author_flair=CASE WHEN excluded.author_flair != '' THEN excluded.author_flair ELSE reddit_comments.author_flair END,
+       post_title=CASE WHEN excluded.post_title != '' THEN excluded.post_title ELSE reddit_comments.post_title END`,
   ).run(
     row.id,
     row.sub,
@@ -408,6 +430,9 @@ function persistComment(row: {
     bodyKey(row.body),
     row.capturedAt,
     row.nyDay,
+    row.author.slice(0, 40),
+    row.authorFlair.slice(0, 80),
+    row.postTitle.slice(0, 180),
   );
   db.prepare("DELETE FROM reddit_comment_tickers WHERE comment_id = ?").run(row.id);
   const insT = db.prepare("INSERT OR IGNORE INTO reddit_comment_tickers (comment_id, ticker) VALUES (?, ?)");
@@ -457,13 +482,7 @@ function snapshotTickers(sub: string, ts: string): TickerHit[] {
   return hits;
 }
 
-function ingestList(
-  sub: string,
-  threadId: string,
-  kind: string,
-  comments: { id: string; body: string; score: number; author: string; created: number }[],
-  ts: string,
-) {
+function ingestList(sub: string, threadId: string, kind: string, comments: PulledComment[], ts: string, postTitle: string) {
   const seenKey = new Map<string, number>();
   for (const c of comments) {
     const flag0 = cheapFlag(c.body, c.author);
@@ -479,6 +498,9 @@ function ingestList(
       kind,
       body: c.body,
       score: c.score,
+      author: c.author,
+      authorFlair: c.authorFlair,
+      postTitle,
       created: c.created ? new Date(c.created * 1000).toISOString() : ts,
       nyDay: nyDayFromCreated(c.created, ts),
       flag,
@@ -552,6 +574,7 @@ export function paceTickers(subs: string[]): TickerPace[] {
     last3h: number;
   }[];
   const paceCfg = appSettings().reddit;
+  const rank = { up: 0, flat: 1, down: 2 };
   return paceRows
     .map((r) => {
       const comments = Number(r.comments);
@@ -566,10 +589,28 @@ export function paceTickers(subs: string[]): TickerPace[] {
             ? 20
             : last1h;
       const spike = last1h >= paceCfg.spikeLast1h && velocity >= paceCfg.spikeVelocity;
-      return { ticker: r.ticker, comments, last1h, last3h, velocity, spike };
+      const { trend, paceDelta } = mentionTrend(last1h, last3h, paceCfg);
+      return { ticker: r.ticker, comments, last1h, last3h, velocity, spike, trend, paceDelta };
     })
-    .sort((a, b) => b.comments - a.comments || b.last1h - a.last1h)
+    .sort((a, b) => rank[a.trend] - rank[b.trend] || b.paceDelta - a.paceDelta || b.comments - a.comments)
     .slice(0, 120);
+}
+
+function mentionTrend(
+  last1h: number,
+  last3h: number,
+  cfg: { surgeUpRatio: number; surgeDownRatio: number; surgeMinGap: number },
+): { trend: TickerPace["trend"]; paceDelta: number } {
+  const rateNow = last1h;
+  const ratePrev = Math.max(0, last3h - last1h) / 2;
+  const paceDelta = rateNow - ratePrev;
+  if (paceDelta >= cfg.surgeMinGap && (ratePrev === 0 || rateNow >= ratePrev * cfg.surgeUpRatio)) {
+    return { trend: "up", paceDelta };
+  }
+  if (-paceDelta >= cfg.surgeMinGap && rateNow <= ratePrev * cfg.surgeDownRatio) {
+    return { trend: "down", paceDelta };
+  }
+  return { trend: "flat", paceDelta };
 }
 
 export function liveTickers(source: "wsb" | "subs"): TickerPace[] {
@@ -689,13 +730,21 @@ export function listWindowComments(source: "wsb" | "subs", ticker: string, offse
   ).n;
   const rows = db
     .prepare(
-      `SELECT c.body, c.score, c.sub, c.created_utc
+      `SELECT c.body, c.sub, c.created_utc, c.author, c.author_flair, c.post_title, c.thread_id
        FROM reddit_comments c
        WHERE ${where}
        ORDER BY c.created_utc DESC
        LIMIT ? OFFSET ?`,
     )
-    .all(...args, limit, start) as { body: string; score: number; sub: string; created_utc: string }[];
+    .all(...args, limit, start) as {
+    body: string;
+    sub: string;
+    created_utc: string;
+    author: string;
+    author_flair: string;
+    post_title: string;
+    thread_id: string;
+  }[];
 
   return {
     total,
@@ -704,12 +753,21 @@ export function listWindowComments(source: "wsb" | "subs", ticker: string, offse
     comments: rows.map((r) => ({
       ticker: symbol || "",
       body: r.body.replace(/\s+/g, " ").trim(),
-      score: r.score,
+      score: 0,
       flag: "ok",
       sub: r.sub,
       created: r.created_utc,
+      author: r.author || "",
+      authorFlair: r.author_flair || "",
+      postTitle: r.post_title || "",
+      postUrl: postLink(r.sub, r.thread_id),
     })),
   };
+}
+
+function postLink(sub: string, threadId: string): string {
+  if (!sub || !threadId || threadId === "archive" || threadId === "none") return "";
+  return `https://www.reddit.com/r/${sub}/comments/${threadId}/`;
 }
 
 function prune() {
@@ -768,6 +826,15 @@ CREATE TABLE IF NOT EXISTS reddit_ticker_snapshots (
   if (!columnNames("reddit_comments").has("ny_day")) {
     db.exec("ALTER TABLE reddit_comments ADD COLUMN ny_day TEXT NOT NULL DEFAULT ''");
   }
+  if (!columnNames("reddit_comments").has("author")) {
+    db.exec("ALTER TABLE reddit_comments ADD COLUMN author TEXT NOT NULL DEFAULT ''");
+  }
+  if (!columnNames("reddit_comments").has("author_flair")) {
+    db.exec("ALTER TABLE reddit_comments ADD COLUMN author_flair TEXT NOT NULL DEFAULT ''");
+  }
+  if (!columnNames("reddit_comments").has("post_title")) {
+    db.exec("ALTER TABLE reddit_comments ADD COLUMN post_title TEXT NOT NULL DEFAULT ''");
+  }
   backfillNyDay();
   db.exec(`
 CREATE INDEX IF NOT EXISTS idx_reddit_comments_ny_day ON reddit_comments(ny_day);
@@ -801,7 +868,7 @@ export async function collectWsbDaily(): Promise<SocialRun> {
       errors.push(`archivo: ${(e as Error).message}`.slice(0, 160));
     }
   }
-  ingestList(c.wsb, threadId || "none", "daily", comments, ts);
+  ingestList(c.wsb, threadId || "none", "daily", comments, ts, threadTitle ?? "");
   const hits = threadId ? snapshotTickers(c.wsb, ts) : [];
   const insW = db.prepare("INSERT OR REPLACE INTO wsb_mentions (ticker, captured_at, count) VALUES (?, ?, ?)");
   for (const h of hits) insW.run(h.ticker, ts, h.comments);
@@ -847,12 +914,12 @@ export async function collectOtherSubs(): Promise<SocialRun> {
           if (!p.id) continue;
           const comments = await fetchComments(sub, p.id, c.commentsPerPost, "new");
           n += comments.length;
-          ingestList(sub, p.id, "post", comments, ts);
+          ingestList(sub, p.id, "post", comments, ts, p.title ?? "");
         }
       } catch {
         const comments = await fetchArchiveComments(sub, c.commentsPerPost * c.hotPostsPerSub);
         n = comments.length;
-        ingestList(sub, "archive", "post", comments, ts);
+        ingestList(sub, "archive", "post", comments, ts, "");
       }
       nComments += n;
       perSub.push({ sub, hits: snapshotTickers(sub, ts) });

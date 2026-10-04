@@ -24,6 +24,9 @@ export type AppSettings = {
     velocityQuietHour: number;
     velocityBurst1h: number;
     alertLast1h: number;
+    surgeUpRatio: number;
+    surgeDownRatio: number;
+    surgeMinGap: number;
   };
   cartera: {
     holding: WatchBand;
@@ -141,6 +144,8 @@ export type TickerPace = {
   last3h: number;
   velocity: number;
   spike: boolean;
+  trend?: "up" | "flat" | "down";
+  paceDelta?: number;
 };
 
 export type TickerHit = {
@@ -157,6 +162,10 @@ export type CommentQuote = {
   score: number;
   sub: string;
   created?: string;
+  author?: string;
+  authorFlair?: string;
+  postTitle?: string;
+  postUrl?: string;
 };
 
 export type CommentPage = {

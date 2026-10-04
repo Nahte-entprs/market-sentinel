@@ -5,10 +5,22 @@ import { fmtTime, type AppState, type CommentPage, type TickerPace } from "./typ
 type Source = "wsb" | "subs";
 
 function visibleTickers(rows: TickerPace[], minMentions: number, maxTickers: number): TickerPace[] {
+  const rank = { up: 0, flat: 1, down: 2 };
   return rows
     .filter((t) => t.comments >= minMentions)
-    .sort((a, b) => b.comments - a.comments || b.last1h - a.last1h)
+    .sort(
+      (a, b) =>
+        rank[a.trend ?? "flat"] - rank[b.trend ?? "flat"] ||
+        (b.paceDelta ?? 0) - (a.paceDelta ?? 0) ||
+        b.comments - a.comments,
+    )
     .slice(0, maxTickers);
+}
+
+function TrendMark({ trend }: { trend?: TickerPace["trend"] }) {
+  if (trend === "up") return <span className="text-ha-green font-medium" aria-label="Surgiendo">↑</span>;
+  if (trend === "down") return <span className="text-ha-red font-medium" aria-label="Perdiendo impulso">↓</span>;
+  return <span className="text-ha-muted" aria-label="Manteniendo">–</span>;
 }
 
 export function Reddit({ state }: { state: AppState; onReload: () => Promise<void> }) {
@@ -119,10 +131,11 @@ export function Reddit({ state }: { state: AppState; onReload: () => Promise<voi
           <table className="w-full text-sm">
             <thead>
               <tr className="text-[11px] text-ha-muted">
+                <th className="w-4 pb-1" />
                 <th className="text-left font-normal pb-1">Ticker</th>
-                <th className="text-right font-normal pb-1 w-12">24 h</th>
-                <th className="text-right font-normal pb-1 w-12">1 h</th>
-                <th className="text-right font-normal pb-1 w-12">3 h</th>
+                <th className="text-right font-normal pb-1 w-10">1 h</th>
+                <th className="text-right font-normal pb-1 w-10">3 h</th>
+                <th className="text-right font-normal pb-1 w-10">24 h</th>
               </tr>
             </thead>
             <tbody>
@@ -134,10 +147,11 @@ export function Reddit({ state }: { state: AppState; onReload: () => Promise<voi
                     onClick={() => choose(t.ticker)}
                     className={`cursor-pointer border-t border-ha-border ${on ? "bg-ha-inset" : ""}`}
                   >
+                    <td className="py-1.5 text-center"><TrendMark trend={t.trend} /></td>
                     <td className="py-1.5 font-medium">{t.ticker}</td>
-                    <td className="py-1.5 text-right tabular-nums">{t.comments}</td>
                     <td className="py-1.5 text-right tabular-nums">{t.last1h}</td>
                     <td className="py-1.5 text-right tabular-nums">{t.last3h}</td>
+                    <td className="py-1.5 text-right tabular-nums">{t.comments}</td>
                   </tr>
                 );
               })}
@@ -178,11 +192,20 @@ export function Reddit({ state }: { state: AppState; onReload: () => Promise<voi
             {page.comments.map((q, i) => (
               <article key={`${q.created ?? ""}-${i}`} className="rounded-xl bg-ha-inset p-3 text-sm">
                 <p className="text-[11px] text-ha-muted">
-                  {q.sub ? `r/${q.sub}` : ""}
-                  {q.sub ? " · " : ""}
-                  {q.score} votos Reddit
+                  {q.author && q.author !== "[deleted]" ? `u/${q.author}` : "sin usuario"}
+                  {q.authorFlair ? ` · ${q.authorFlair}` : ""}
                   {q.created ? ` · ${fmtTime(q.created)}` : ""}
+                  {q.sub ? ` · r/${q.sub}` : ""}
                 </p>
+                {q.postTitle || q.postUrl ? (
+                  q.postUrl ? (
+                    <a href={q.postUrl} target="_blank" rel="noreferrer" className="text-[11px] text-ha-accent hover:underline">
+                      {q.postTitle || "Post"}
+                    </a>
+                  ) : (
+                    <p className="text-[11px] text-ha-muted">{q.postTitle}</p>
+                  )
+                ) : null}
                 <p className="mt-1 whitespace-pre-wrap break-words">{q.body}</p>
               </article>
             ))}
