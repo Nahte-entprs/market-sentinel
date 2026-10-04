@@ -7,11 +7,12 @@ import { ingestFeeds, recentNews } from "./news.ts";
 import { extractEntities, lexiconPolarity, matchThesis } from "./entities.ts";
 import { tickersFromEntities } from "./graph.ts";
 import { computeRegime, confidenceFrom, currentRegime, scoreThreshold } from "./regime.ts";
-import { collectOtherSubs, collectWsbDaily, ensureRedditTables } from "./reddit-social.ts";
+import { collectOtherSubs, collectWsbDaily, ensureRedditTables, liveTickers } from "./reddit-social.ts";
 import { publishIdeas, publishJob, publishRegime, publishSocial, publishStatus } from "./mqtt.ts";
 import { listPositions, publishCarteraState } from "./portfolio.ts";
 import { loadSocialRun, saveSocialRun } from "./social-store.ts";
-import type { Candidate, IdeaRecord, JobInfo, JobStatus, TickerCategory, WhyItem } from "./types.ts";
+import { appSettings } from "./settings.ts";
+import type { Candidate, IdeaRecord, JobInfo, JobStatus, WhyItem } from "./types.ts";
 
 type JobDef = {
   id: string;
@@ -69,24 +70,19 @@ async function fundamentalsJob() {
   return `${r.ok} fundamentals` + (r.errors.length ? ` (${r.errors.length} errores)` : "");
 }
 
-const TICKER_WATCH: Record<TickerCategory, { changePct: number; volumeRatio: number; trendPct: number; intradayVolumeRatio: number }> = {
-  holding: { changePct: 2, volumeRatio: 2, trendPct: 4, intradayVolumeRatio: 3.5 },
-  priority: { changePct: 2, volumeRatio: 2, trendPct: 5, intradayVolumeRatio: 3.5 },
-  watchlist: { changePct: 3.5, volumeRatio: 2.5, trendPct: 8, intradayVolumeRatio: 4.5 },
-};
-
 function whyPriceVol(symbol: string): WhyItem[] {
   const q = getQuote(symbol);
   if (!q) return [];
+  const band = appSettings().cartera;
   const items: WhyItem[] = [];
-  if (Math.abs(q.changePct) >= 1.5) {
+  if (Math.abs(q.changePct) >= band.radarChangePct) {
     items.push({
       text: `${symbol} ${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% a ${q.price}`,
       kind: "price",
       weight: Math.abs(q.changePct) >= 3 ? 4 : 2,
     });
   }
-  if (q.volumeRatio >= 2.5) {
+  if (q.volumeRatio >= band.radarVolumeDaily) {
     items.push({
       text: `volumen ${q.volumeRatio.toFixed(1)}× promedio diario`,
       kind: "volume",
@@ -94,7 +90,7 @@ function whyPriceVol(symbol: string): WhyItem[] {
     });
   }
   const intra = lastBarVolumeVsMedian(symbol);
-  if (intra && intra >= 3) {
+  if (intra && intra >= band.radarVolume5m) {
     items.push({
       text: `volumen 5m ${intra.toFixed(1)}× mediana reciente`,
       kind: "volume",
@@ -114,7 +110,7 @@ async function volumeJob() {
     const why = whyPriceVol(t.symbol);
     const sectorEtf = listTickers("etf").find((e) => e.sector === t.sector)?.symbol ?? "SMH";
     const sq = getQuote(sectorEtf);
-    if (sq && Math.abs(sq.changePct) >= 2) {
+    if (sq && Math.abs(sq.changePct) >= appSettings().cartera.sectorMovePct) {
       why.push({
         text: `${sectorEtf} ${sq.changePct >= 0 ? "+" : ""}${sq.changePct.toFixed(1)}% (sector ${t.sector})`,
         kind: "sector",
@@ -143,7 +139,8 @@ async function volumeJob() {
       if (alert) fired.push(t.symbol);
     }
 
-    const thresh = TICKER_WATCH[t.category] ?? TICKER_WATCH.watchlist;
+    const bands = appSettings().cartera;
+    const thresh = bands[t.category] ?? bands.watchlist;
     const reasons: string[] = [];
     if (Math.abs(q.changePct) >= thresh.changePct) {
       reasons.push(`${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% en el día`);
@@ -684,6 +681,15 @@ export function startScheduler() {
   }
 }
 
+function overlayTickers(run: ReturnType<typeof loadSocialRun>, source: "wsb" | "subs") {
+  if (!run) return null;
+  try {
+    return { ...run, tickers24h: liveTickers(source) };
+  } catch {
+    return run;
+  }
+}
+
 export function getState() {
   const ideas = mappedIdeas();
   const digest = lastDigest();
@@ -708,10 +714,11 @@ export function getState() {
     digestAt: digest.at?.value ?? null,
     news: recentNews(12, 25),
     reddit: {
-      wsb: loadSocialRun("wsb"),
-      subs: loadSocialRun("subs"),
+      wsb: overlayTickers(loadSocialRun("wsb"), "wsb"),
+      subs: overlayTickers(loadSocialRun("subs"), "subs"),
     },
     graphHint: "Iran → oil/hormuz → SMH/MU",
+    settings: appSettings(),
     disclaimer: "No es consejo financiero. Datos delayed. Centinela es un radar, no un broker.",
     ingress: true,
   };

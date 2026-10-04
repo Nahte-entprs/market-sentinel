@@ -1,6 +1,6 @@
 import { db, id, json, nowIso, parseJson, getMeta, setMeta } from "./db.ts";
 import { cooldownMs, currentRegime, scoreThreshold, suppressPush } from "./regime.ts";
-import { isQuietHours } from "./config.ts";
+import { appSettings, quietHoursActive } from "./settings.ts";
 import { templateSummarize, maybeEnrich } from "./summarizer.ts";
 import { publishAlert, publishDigest, publishEnrich, publishNotify, publishTickerAlert, notifyUrl } from "./mqtt.ts";
 import type { AlertRecord, Candidate, Regime, TickerAlert } from "./types.ts";
@@ -123,8 +123,8 @@ export async function emitIfNeeded(c: Candidate): Promise<AlertRecord | null> {
 export function maybePushTickerWatch(alert: TickerAlert): boolean {
   const last = getMeta(`ticker_watch_${alert.symbol}`);
   if (last && Date.now() - Date.parse(last) < cooldownMs()) return false;
-  const steep = Math.abs(alert.changePct) >= 5;
-  if (isQuietHours() && alert.category !== "holding" && !steep) return false;
+  const steep = Math.abs(alert.changePct) >= appSettings().cartera.steepQuietPct;
+  if (quietHoursActive() && alert.category !== "holding" && !steep) return false;
   setMeta(`ticker_watch_${alert.symbol}`, nowIso());
   publishTickerAlert(alert);
   return true;
@@ -135,8 +135,8 @@ export function maybePushReddit(run: SocialRun): boolean {
   if (!spikes.length) return false;
   const last = getMeta(`reddit_spike_${run.source}`);
   if (last && Date.now() - Date.parse(last) < cooldownMs()) return false;
-  const huge = spikes.some((s) => s.last1h >= 15);
-  if (isQuietHours() && !huge) return false;
+  const huge = spikes.some((s) => s.last1h >= appSettings().reddit.alertLast1h);
+  if (quietHoursActive() && !huge) return false;
   setMeta(`reddit_spike_${run.source}`, nowIso());
   const title = `Reddit · ${spikes.map((s) => s.ticker).join(", ")}`;
   const message = spikes
@@ -155,7 +155,7 @@ export function maybePushReddit(run: SocialRun): boolean {
 export function maybePushCrisis(regime: Regime): boolean {
   if (regime !== "CRISIS") return false;
   const last = getMeta("regime_crisis_push");
-  if (last && Date.now() - Date.parse(last) < 6 * 3600_000) return false;
+  if (last && Date.now() - Date.parse(last) < appSettings().alertas.crisisPushHours * 3600_000) return false;
   setMeta("regime_crisis_push", nowIso());
   publishNotify({
     section: "radar",

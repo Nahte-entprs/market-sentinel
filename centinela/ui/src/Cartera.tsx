@@ -8,12 +8,6 @@ const LABELS: Record<Category, string> = {
   watchlist: "Watchlist",
 };
 
-const HINTS: Record<Category, string> = {
-  holding: "Por USD invertido · toca para detalle · alarmas de volumen 5m",
-  priority: "Corto plazo · flechas para ordenar",
-  watchlist: "En la mira · flechas para ordenar",
-};
-
 export function Cartera({ state, onReload }: { state: AppState; onReload: () => Promise<void> }) {
   const [symbol, setSymbol] = useState("");
   const [busy, setBusy] = useState(false);
@@ -129,7 +123,6 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
           autoCapitalize="characters"
           className="mt-1 w-full rounded-xl bg-ha-input border border-ha-accent/50 px-3 py-2.5 text-base tracking-wide"
         />
-        <p className="text-[11px] text-ha-muted mt-2">Escríbelo y tócalo + en la lista donde va.</p>
       </div>
 
       {(["holding", "priority", "watchlist"] as Category[]).map((cat) => (
@@ -137,7 +130,6 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
           <div className="flex items-center gap-2 px-3 py-2.5 border-b border-ha-border">
             <div className="min-w-0 flex-1">
               <h2 className="font-medium">{LABELS[cat]}</h2>
-              <p className="text-[11px] text-ha-muted">{HINTS[cat]}</p>
             </div>
             <button
               type="button"
@@ -250,7 +242,6 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
         <div className="fixed inset-0 z-20 bg-black/60 flex items-end justify-center p-4" onClick={() => setConfirm(null)}>
           <div className="w-full max-w-md rounded-2xl bg-ha-card border border-ha-border p-4 mb-4" onClick={(e) => e.stopPropagation()}>
             <p className="font-medium">¿Quitar {confirm}?</p>
-            <p className="text-sm text-ha-muted mt-1">Sale de las listas. Las cotizaciones del radar de macros no se tocan.</p>
             <div className="mt-4 flex gap-2">
               <button type="button" onClick={() => setConfirm(null)} className="flex-1 rounded-lg bg-ha-text/10 py-2.5 text-sm">
                 Cancelar

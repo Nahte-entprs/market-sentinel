@@ -1,4 +1,70 @@
-export type Tab = "radar" | "cartera" | "reddit" | "ideas";
+export type Tab = "radar" | "cartera" | "reddit" | "ideas" | "config";
+
+export type WatchBand = {
+  changePct: number;
+  volumeRatio: number;
+  trendPct: number;
+  intradayVolumeRatio: number;
+};
+
+export type AppSettings = {
+  reddit: {
+    minMentions: number;
+    maxTickers: number;
+    pageSize: number;
+    minChars: number;
+    maxChars: number;
+    blockText: string;
+    keepDays: number;
+    commentsDaily: number;
+    hotPostsPerSub: number;
+    commentsPerPost: number;
+    spikeLast1h: number;
+    spikeVelocity: number;
+    velocityQuietHour: number;
+    velocityBurst1h: number;
+    alertLast1h: number;
+  };
+  cartera: {
+    holding: WatchBand;
+    priority: WatchBand;
+    watchlist: WatchBand;
+    radarChangePct: number;
+    radarVolumeDaily: number;
+    radarVolume5m: number;
+    sectorMovePct: number;
+    steepQuietPct: number;
+  };
+  alertas: {
+    scoreNormal: number;
+    scoreWatch: number;
+    scoreHigh: number;
+    scoreCrisis: number;
+    cooldownNormalMin: number;
+    cooldownWatchMin: number;
+    cooldownHighMin: number;
+    cooldownCrisisMin: number;
+    crisisPushHours: number;
+    crisisBypassScore: number;
+    quietStart: string;
+    quietEnd: string;
+  };
+  regimen: {
+    watchSpy: number;
+    watchQqq: number;
+    watchSmh: number;
+    watchVix: number;
+    highSpy: number;
+    highQqq: number;
+    highSmh: number;
+    highVix: number;
+    crisisSpy: number;
+    crisisQqq: number;
+    crisisSmh: number;
+    crisisOil: number;
+    crisisVixChange: number;
+  };
+};
 
 export type Why = { text: string; kind: string; weight: number };
 
@@ -90,6 +156,14 @@ export type CommentQuote = {
   body: string;
   score: number;
   sub: string;
+  created?: string;
+};
+
+export type CommentPage = {
+  total: number;
+  offset: number;
+  limit: number;
+  comments: CommentQuote[];
 };
 
 export type SocialRun = {
@@ -139,6 +213,7 @@ export type AppState = {
   digestAt: string | null;
   news: { title: string; url: string; tier: string; source: string }[];
   reddit: { wsb: SocialRun | null; subs: SocialRun | null };
+  settings: AppSettings;
   disclaimer: string;
 };
 

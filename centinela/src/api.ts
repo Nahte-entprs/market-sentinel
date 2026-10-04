@@ -10,6 +10,8 @@ import { addIdea, listFactors, upsertTicker, removeTicker, parseCategory, moveTi
 import { publishTextState } from "./mqtt.ts";
 import type { MqttDrafts } from "./mqtt.ts";
 import { publishCarteraState } from "./portfolio.ts";
+import { appSettings, saveAppSettings } from "./settings.ts";
+import { listWindowComments } from "./reddit-social.ts";
 
 export const drafts: MqttDrafts = {
   ticker: "",
@@ -82,6 +84,19 @@ export function buildApi() {
     removeTicker(decodeURIComponent(c.req.param("symbol")));
     publishCarteraState();
     return c.json({ ok: true });
+  });
+  app.get("/api/settings", (c) => c.json(appSettings()));
+  app.post("/api/settings", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body !== "object") return c.json({ error: "cuerpo inválido" }, 400);
+    return c.json(saveAppSettings(body));
+  });
+  app.get("/api/reddit/comments", (c) => {
+    const source = c.req.query("source") === "subs" ? "subs" : "wsb";
+    const ticker = (c.req.query("ticker") || "").trim();
+    if (ticker && !/^[A-Za-z0-9.]{1,10}$/.test(ticker)) return c.json({ error: "ticker inválido" }, 400);
+    const offset = Math.max(0, Number(c.req.query("offset") || 0) || 0);
+    return c.json(listWindowComments(source, ticker, offset));
   });
   app.post("/api/ideas", async (c) => {
     const body = await c.req.json<{ title?: string; claim?: string; factorId?: string }>();

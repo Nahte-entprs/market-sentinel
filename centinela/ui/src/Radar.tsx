@@ -66,7 +66,7 @@ export function Radar({ state, onReload }: { state: AppState; onReload: () => Pr
 
       <section className="rounded-2xl bg-ha-card p-4 border border-ha-border">
         <h2 className="text-xs text-ha-muted mb-2">Headlines</h2>
-        {state.news.length === 0 && <p className="text-ha-muted text-sm">Vacío — los feeds aún no corrieron.</p>}
+        {state.news.length === 0 && <p className="text-ha-muted text-sm">Vacío.</p>}
         <ul className="space-y-2">
           {state.news.slice(0, 8).map((n) => (
             <li key={n.url} className="text-sm">
@@ -89,7 +89,7 @@ export function Radar({ state, onReload }: { state: AppState; onReload: () => Pr
                   {job.letter ? `${job.letter}. ` : ""}
                   {job.name}
                 </p>
-                <p className="text-[11px] text-ha-muted truncate">{job.lastNote || job.description}</p>
+                {job.lastNote && <p className="text-[11px] text-ha-muted truncate">{job.lastNote}</p>}
                 <p className="text-[11px] mt-0.5">
                   <span
                     className={

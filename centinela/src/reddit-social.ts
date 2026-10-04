@@ -3,6 +3,7 @@ import { db, nowIso, readJsonFile } from "./db.ts";
 import { isMegaCap, lexiconPolarity } from "./entities.ts";
 import { extractSocialTickers, pickCommentTicker } from "./ticker-filter.ts";
 import { MARKET_TZ } from "./config.ts";
+import { appSettings, blockPhrases } from "./settings.ts";
 import type { TickerPace } from "./types.ts";
 
 /**
@@ -44,6 +45,7 @@ export type CommentQuote = {
   score: number;
   flag: string;
   sub: string;
+  created?: string;
 };
 
 export type SocialRun = {
@@ -195,11 +197,18 @@ function storageStats(): SocialRun["storage"] {
   const row = db
     .prepare("SELECT COUNT(*) AS n, MIN(ny_day) AS oldest FROM reddit_comments")
     .get() as { n: number; oldest: string | null };
-  return { keepDays: COMMENT_KEEP_DAYS, comments: row.n, oldestNyDay: row.oldest };
+  return { keepDays: appSettings().reddit.keepDays, comments: row.n, oldestNyDay: row.oldest };
 }
 
 function cfg(): RedditSubConfig {
-  return readJsonFile<RedditSubConfig>("reddit-subs.json");
+  const file = readJsonFile<RedditSubConfig>("reddit-subs.json");
+  const s = appSettings().reddit;
+  return {
+    ...file,
+    hotPostsPerSub: s.hotPostsPerSub,
+    commentsPerPost: s.commentsPerPost,
+    commentsDaily: s.commentsDaily,
+  };
 }
 
 function sleep(ms: number) {
@@ -517,6 +526,57 @@ function isoAgo(ms: number) {
   return new Date(Date.now() - ms).toISOString();
 }
 
+export function paceTickers(subs: string[]): TickerPace[] {
+  if (!subs.length) return [];
+  const since24 = isoAgo(24 * 3600_000);
+  const since1h = isoAgo(3600_000);
+  const since3h = isoAgo(3 * 3600_000);
+  const ph = subs.map(() => "?").join(",");
+  const paceRows = db
+    .prepare(
+      `SELECT t.ticker AS ticker,
+              COUNT(*) AS comments,
+              SUM(CASE WHEN c.created_utc >= ? THEN 1 ELSE 0 END) AS last1h,
+              SUM(CASE WHEN c.created_utc >= ? THEN 1 ELSE 0 END) AS last3h
+       FROM reddit_comments c
+       JOIN reddit_comment_tickers t ON t.comment_id = c.id
+       WHERE c.created_utc >= ? AND c.sub IN (${ph})
+         AND c.cheap_flag NOT IN ('deleted', 'automod')
+       GROUP BY t.ticker
+       HAVING comments >= 1`,
+    )
+    .all(since1h, since3h, since24, ...subs) as {
+    ticker: string;
+    comments: number;
+    last1h: number;
+    last3h: number;
+  }[];
+  const paceCfg = appSettings().reddit;
+  return paceRows
+    .map((r) => {
+      const comments = Number(r.comments);
+      const last1h = Number(r.last1h);
+      const last3h = Number(r.last3h);
+      const rest = Math.max(0, comments - last1h);
+      const hourlyAvg = rest / 23;
+      const velocity =
+        hourlyAvg >= paceCfg.velocityQuietHour
+          ? last1h / hourlyAvg
+          : last1h >= paceCfg.velocityBurst1h
+            ? 20
+            : last1h;
+      const spike = last1h >= paceCfg.spikeLast1h && velocity >= paceCfg.spikeVelocity;
+      return { ticker: r.ticker, comments, last1h, last3h, velocity, spike };
+    })
+    .sort((a, b) => b.comments - a.comments || b.last1h - a.last1h)
+    .slice(0, 120);
+}
+
+export function liveTickers(source: "wsb" | "subs"): TickerPace[] {
+  const c = cfg();
+  return paceTickers(source === "wsb" ? [c.wsb] : c.subs);
+}
+
 function board24h(
   subs: string[],
   preferTickers: string[],
@@ -531,7 +591,6 @@ function board24h(
     return { quotes: [], sentiment: emptySent, windowComments: 0, tickers24h: [] };
   }
   const since24 = isoAgo(24 * 3600_000);
-  const since1h = isoAgo(3600_000);
   const since3h = isoAgo(3 * 3600_000);
   const ph = subs.map(() => "?").join(",");
 
@@ -558,39 +617,7 @@ function board24h(
     else unlabeled++;
   }
 
-  const paceRows = db
-    .prepare(
-      `SELECT t.ticker AS ticker,
-              COUNT(*) AS comments,
-              SUM(CASE WHEN c.created_utc >= ? THEN 1 ELSE 0 END) AS last1h,
-              SUM(CASE WHEN c.created_utc >= ? THEN 1 ELSE 0 END) AS last3h
-       FROM reddit_comments c
-       JOIN reddit_comment_tickers t ON t.comment_id = c.id
-       WHERE c.created_utc >= ? AND c.sub IN (${ph})
-         AND c.cheap_flag NOT IN ('deleted', 'automod')
-       GROUP BY t.ticker
-       HAVING comments >= 2`,
-    )
-    .all(since1h, since3h, since24, ...subs) as {
-    ticker: string;
-    comments: number;
-    last1h: number;
-    last3h: number;
-  }[];
-
-  const tickers24h: TickerPace[] = paceRows
-    .map((r) => {
-      const comments = Number(r.comments);
-      const last1h = Number(r.last1h);
-      const last3h = Number(r.last3h);
-      const rest = Math.max(0, comments - last1h);
-      const hourlyAvg = rest / 23;
-      const velocity = hourlyAvg >= 0.4 ? last1h / hourlyAvg : last1h >= 5 ? 20 : last1h;
-      const spike = last1h >= 6 && velocity >= 2.5;
-      return { ticker: r.ticker, comments, last1h, last3h, velocity, spike };
-    })
-    .sort((a, b) => Number(b.spike) - Number(a.spike) || b.velocity - a.velocity || b.comments - a.comments)
-    .slice(0, 24);
+  const tickers24h = paceTickers(subs);
 
   const prefer = new Set(preferTickers.length ? preferTickers : tickers24h.slice(0, 10).map((t) => t.ticker));
   const quoteRows = db
@@ -630,8 +657,63 @@ function board24h(
   };
 }
 
+function likeNeedle(phrase: string): string {
+  return `%${phrase.replace(/[%_]/g, "")}%`;
+}
+
+export function listWindowComments(source: "wsb" | "subs", ticker: string, offset: number) {
+  const c = cfg();
+  const subs = source === "wsb" ? [c.wsb] : c.subs;
+  const s = appSettings().reddit;
+  const limit = s.pageSize;
+  const start = Math.max(0, Math.floor(offset) || 0);
+  if (!subs.length) return { total: 0, offset: start, limit, comments: [] as CommentQuote[] };
+
+  const since24 = isoAgo(24 * 3600_000);
+  const phrases = blockPhrases(s.blockText);
+  const ph = subs.map(() => "?").join(",");
+  const phraseSql = phrases.map(() => "AND lower(c.body) NOT LIKE ?").join(" ");
+  const maxSql = s.maxChars > 0 ? "AND length(c.body) <= ?" : "";
+  const symbol = ticker.trim().toUpperCase();
+  const tickerSql = symbol
+    ? "AND EXISTS (SELECT 1 FROM reddit_comment_tickers t WHERE t.comment_id = c.id AND t.ticker = ?)"
+    : "AND NOT EXISTS (SELECT 1 FROM reddit_comment_tickers t WHERE t.comment_id = c.id)";
+  const where = `c.created_utc >= ? AND c.sub IN (${ph}) AND c.cheap_flag = 'ok' AND length(c.body) >= ? ${maxSql} ${phraseSql} ${tickerSql}`;
+  const args: (string | number)[] = [since24, ...subs, s.minChars];
+  if (s.maxChars > 0) args.push(s.maxChars);
+  for (const p of phrases) args.push(likeNeedle(p));
+  if (symbol) args.push(symbol);
+
+  const total = (
+    db.prepare(`SELECT COUNT(*) AS n FROM reddit_comments c WHERE ${where}`).get(...args) as { n: number }
+  ).n;
+  const rows = db
+    .prepare(
+      `SELECT c.body, c.score, c.sub, c.created_utc
+       FROM reddit_comments c
+       WHERE ${where}
+       ORDER BY c.created_utc DESC
+       LIMIT ? OFFSET ?`,
+    )
+    .all(...args, limit, start) as { body: string; score: number; sub: string; created_utc: string }[];
+
+  return {
+    total,
+    offset: start,
+    limit,
+    comments: rows.map((r) => ({
+      ticker: symbol || "",
+      body: r.body.replace(/\s+/g, " ").trim(),
+      score: r.score,
+      flag: "ok",
+      sub: r.sub,
+      created: r.created_utc,
+    })),
+  };
+}
+
 function prune() {
-  const cut = new Date(Date.now() - COMMENT_KEEP_DAYS * 86400_000).toISOString();
+  const cut = new Date(Date.now() - appSettings().reddit.keepDays * 86400_000).toISOString();
   db.prepare("DELETE FROM reddit_comments WHERE created_utc < ?").run(cut);
   db.prepare("DELETE FROM reddit_ticker_snapshots WHERE captured_at < ?").run(cut);
   db.prepare("DELETE FROM reddit_comment_tickers WHERE comment_id NOT IN (SELECT id FROM reddit_comments)").run();

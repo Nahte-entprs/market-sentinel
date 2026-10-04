@@ -1,6 +1,6 @@
 import { getSetting, setSetting } from "./db.ts";
 import { getQuote } from "./quotes.ts";
-import { isQuietHours } from "./config.ts";
+import { appSettings, quietHoursActive } from "./settings.ts";
 import type { Regime, WhyItem } from "./types.ts";
 
 export function currentRegime(): Regime {
@@ -8,29 +8,30 @@ export function currentRegime(): Regime {
 }
 
 export function scoreThreshold(regime: Regime = currentRegime()): number {
+  const a = appSettings().alertas;
   switch (regime) {
     case "CRISIS":
-      return 4;
+      return a.scoreCrisis;
     case "HIGH ALERT":
-      return 5;
+      return a.scoreHigh;
     case "WATCH":
-      return 6;
+      return a.scoreWatch;
     default:
-      return 8;
+      return a.scoreNormal;
   }
 }
 
 export function cooldownMs(regime: Regime = currentRegime()): number {
-  switch (regime) {
-    case "CRISIS":
-      return 8 * 60 * 1000;
-    case "HIGH ALERT":
-      return 20 * 60 * 1000;
-    case "WATCH":
-      return 35 * 60 * 1000;
-    default:
-      return 45 * 60 * 1000;
-  }
+  const a = appSettings().alertas;
+  const min =
+    regime === "CRISIS"
+      ? a.cooldownCrisisMin
+      : regime === "HIGH ALERT"
+        ? a.cooldownHighMin
+        : regime === "WATCH"
+          ? a.cooldownWatchMin
+          : a.cooldownNormalMin;
+  return min * 60 * 1000;
 }
 
 export function computeRegime(): Regime {
@@ -46,11 +47,12 @@ export function computeRegime(): Regime {
   const oilD = oil?.changePct ?? 0;
   const vixLevel = vix?.price ?? 0;
 
+  const g = appSettings().regimen;
   let regime: Regime = "NORMAL";
-  if (spyD <= -1 || qqqD <= -1.5 || smhD <= -2 || vixLevel >= 22) regime = "WATCH";
-  if (spyD <= -1.5 || qqqD <= -2 || smhD <= -3 || vixLevel >= 26) regime = "HIGH ALERT";
-  if (spyD <= -2 && qqqD <= -3 && smhD <= -4) regime = "CRISIS";
-  else if (smhD <= -4 && (oilD >= 3 || vixD >= 15)) regime = "CRISIS";
+  if (spyD <= g.watchSpy || qqqD <= g.watchQqq || smhD <= g.watchSmh || vixLevel >= g.watchVix) regime = "WATCH";
+  if (spyD <= g.highSpy || qqqD <= g.highQqq || smhD <= g.highSmh || vixLevel >= g.highVix) regime = "HIGH ALERT";
+  if (spyD <= g.crisisSpy && qqqD <= g.crisisQqq && smhD <= g.crisisSmh) regime = "CRISIS";
+  else if (smhD <= g.crisisSmh && (oilD >= g.crisisOil || vixD >= g.crisisVixChange)) regime = "CRISIS";
 
   setSetting("regime", regime);
   setSetting(
@@ -68,8 +70,8 @@ export function computeRegime(): Regime {
 }
 
 export function suppressPush(score: number, regime: Regime): boolean {
-  if (regime === "CRISIS" && score >= 7) return false;
-  return isQuietHours();
+  if (regime === "CRISIS" && score >= appSettings().alertas.crisisBypassScore) return false;
+  return quietHoursActive();
 }
 
 export function clamp(n: number, a: number, b: number) {

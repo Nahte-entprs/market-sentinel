@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { Cartera } from "./Cartera";
+import { Config } from "./Config";
 import { Ideas } from "./Ideas";
 import { Radar } from "./Radar";
 import { Reddit } from "./Reddit";
@@ -8,9 +9,9 @@ import type { AppState, Tab } from "./types";
 
 function parseTab(): Tab {
   const h = (window.location.hash || "").replace("#", "");
-  if (h === "cartera" || h === "reddit" || h === "ideas" || h === "radar") return h;
+  if (h === "cartera" || h === "reddit" || h === "ideas" || h === "radar" || h === "config") return h;
   const q = new URLSearchParams(window.location.search).get("tab");
-  if (q === "cartera" || q === "reddit" || q === "ideas" || q === "radar") return q;
+  if (q === "cartera" || q === "reddit" || q === "ideas" || q === "radar" || q === "config") return q;
   return "radar";
 }
 
@@ -42,6 +43,15 @@ function IconReddit({ className }: { className?: string }) {
   );
 }
 
+function IconGear({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" />
+    </svg>
+  );
+}
+
 function IconBulb({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
@@ -57,6 +67,7 @@ const NAV: { id: Tab; label: string; Icon: typeof IconRadar }[] = [
   { id: "cartera", label: "Cartera", Icon: IconBriefcase },
   { id: "reddit", label: "Reddit", Icon: IconReddit },
   { id: "ideas", label: "Ideas", Icon: IconBulb },
+  { id: "config", label: "Config", Icon: IconGear },
 ];
 
 export function App() {
@@ -101,7 +112,7 @@ export function App() {
         className="sticky top-0 z-10 border-b border-ha-border bg-ha-nav/95 backdrop-blur"
         style={{ paddingTop: "max(0.25rem, env(safe-area-inset-top))" }}
       >
-        <div className="mx-auto max-w-lg grid grid-cols-4">
+        <div className="mx-auto max-w-lg grid grid-cols-5">
           {NAV.map((n) => (
             <button
               key={n.id}
@@ -120,6 +131,7 @@ export function App() {
         {tab === "cartera" && <Cartera state={state} onReload={load} />}
         {tab === "reddit" && <Reddit state={state} onReload={load} />}
         {tab === "ideas" && <Ideas state={state} onReload={load} />}
+        {tab === "config" && <Config state={state} onReload={load} />}
         <p className="text-[11px] text-ha-muted mt-6 pb-2">{state.disclaimer}</p>
       </main>
     </div>
