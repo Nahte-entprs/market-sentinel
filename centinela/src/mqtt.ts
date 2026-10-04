@@ -315,7 +315,7 @@ function pub(topic: string, payload: string | Record<string, unknown>, retain = 
 }
 
 export function notifyUrl(section: NotifySection) {
-  return `/hassio/ingress/local_centinela?tab=${section}`;
+  return `/2e00f8dc_centinela?tab=${section}`;
 }
 
 export function publishNotify(n: CentinelaNotify) {

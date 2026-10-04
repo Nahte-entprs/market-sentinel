@@ -11,7 +11,7 @@ sección (radar / cartera / reddit / ideas)
     → MQTT topic centinela/notify
     → automation del paquete
     → notify.notify (todas las apps Companion)
-    → toque abre /hassio/ingress/local_centinela?tab=<sección>
+    → toque abre /2e00f8dc_centinela?tab=<sección>
 ```
 
 1. En `configuration.yaml`:

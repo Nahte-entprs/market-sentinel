@@ -4,42 +4,37 @@
 #     packages: !include_dir_named packages
 #
 # Camino de avisos:
-#   Centinela publica MQTT centinela/notify (sección radar|cartera|reddit|ideas)
-#   → esta automation llama notify.notify (Companion)
-#   → el toque abre el panel ingress en la pestaña correcta.
+#   Centinela publica MQTT centinela/notify
+#   → esta automation llama solo a notify.mobile_app_ethan_s_x6
+#   → el toque abre el panel ingress en la pestaña del aviso.
 #
-# El puente HA es necesario: Companion no lee MQTT del add-on; se registra
-# como servicio notify.* en Home Assistant.
+# No uses "Ejecutar acción": no hay mensaje MQTT, y trigger no existe.
+# Prueba con el botón Enviar aviso de Centinela, o publicando en centinela/notify.
 #
-# Si el add-on no es "local" (instalado desde GitHub), cambia ADDON_SLUG
-# a algo como xxxxx_centinela (Ajustes → Complementos → Centinela → la URL
-# de ingress muestra el slug).
+# Panel real en este HA (barra lateral): /2e00f8dc_centinela?tab=<sección>
 
 automation:
   - id: centinela_notify_companion
     alias: "Centinela → Companion"
     mode: queued
-    max: 12
+    max: 40
     trigger:
       - platform: mqtt
         topic: centinela/notify
     variables:
-      addon_slug: local_centinela
-      section: "{{ trigger.payload_json.section | default('radar') }}"
-      panel: "/hassio/ingress/{{ addon_slug }}?tab={{ section }}"
+      panel: "/2e00f8dc_centinela?tab={{ trigger.payload_json.section | default('radar') }}"
     action:
-      - service: notify.notify
+      - service: notify.mobile_app_ethan_s_x6
         data:
           title: "{{ trigger.payload_json.title }}"
-          message: >
-            {{ trigger.payload_json.message }}
+          message: "{{ trigger.payload_json.message }}"
           data:
             url: "{{ panel }}"
             clickAction: "{{ panel }}"
             ttl: 0
             priority: high
-            tag: "{{ trigger.payload_json.tag | default('centinela-' ~ section) }}"
-            group: "centinela-{{ section }}"
+            tag: "centinela-{{ now().timestamp() | int }}-{{ range(1000) | random }}"
+            group: "centinela-{{ trigger.payload_json.section | default('radar') }}"
             actions:
               - action: URI
                 title: Abrir
