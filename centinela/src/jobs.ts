@@ -105,6 +105,18 @@ function whyPriceVol(symbol: string): WhyItem[] {
       kind: "volume",
       weight: flow.paceRatio >= 2 ? 3 : 2,
     });
+  } else if (
+    !flow.sessionDone &&
+    flow.barSlot != null &&
+    flow.barSlot >= 6 &&
+    flow.paceRatio != null &&
+    flow.paceRatio <= band.radarSessionFade
+  ) {
+    items.push({
+      text: `ritmo ${flow.paceRatio.toFixed(1)}× lo habitual a esta hora (impulso más bajo)`,
+      kind: "volume",
+      weight: 1,
+    });
   }
   return items;
 }
@@ -163,7 +175,9 @@ async function volumeJob() {
       );
     }
     let paceFresh = false;
+    let fadeFresh = false;
     const paceKey = flow.sessionDate ? `vol_pace_${t.symbol}_${flow.sessionDate}` : "";
+    const fadeKey = flow.sessionDate ? `vol_fade_${t.symbol}_${flow.sessionDate}` : "";
     if (flow.burstRatio != null && flow.burstRatio >= thresh.intradayVolumeRatio) {
       reasons.push(`vela 5m ${flow.burstRatio.toFixed(1)}× lo normal a esta hora`);
     }
@@ -177,6 +191,20 @@ async function volumeJob() {
             ? `ritmo del día ${flow.paceRatio.toFixed(1)}× lo habitual`
             : `ritmo ${flow.paceRatio.toFixed(1)}× lo habitual a esta hora`,
         );
+      }
+    } else if (
+      !flow.sessionDone &&
+      flow.barSlot != null &&
+      flow.barSlot >= 6 &&
+      flow.paceRatio != null &&
+      flow.paceRatio <= thresh.sessionFadeRatio &&
+      fadeKey
+    ) {
+      const prevFade = Number(getMeta(fadeKey) || "0");
+      const already = prevFade > 0 && flow.paceRatio > prevFade - 0.15;
+      if (!already) {
+        fadeFresh = true;
+        reasons.push(`ritmo ${flow.paceRatio.toFixed(1)}× lo habitual a esta hora (pierde impulso)`);
       }
     }
     const trend = threeDayTrend(t.symbol);
@@ -198,6 +226,7 @@ async function volumeJob() {
     if (ok) {
       pushed.push(t.symbol);
       if (paceFresh && paceKey && flow.paceRatio != null) setMeta(paceKey, String(flow.paceRatio));
+      if (fadeFresh && fadeKey && flow.paceRatio != null) setMeta(fadeKey, String(flow.paceRatio));
     }
   }
   const bits = [];

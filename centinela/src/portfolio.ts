@@ -2,6 +2,7 @@ import { listTickers, listTickersByCategory } from "./universe.ts";
 import { getQuote, readVolumeSignal } from "./quotes.ts";
 import { publishCartera, publishWatchlist } from "./mqtt.ts";
 import { MIN_SLOT_SAMPLES } from "./volume.ts";
+import { appSettings } from "./settings.ts";
 import type { CarteraPosition, TickerCategory } from "./types.ts";
 import type { TickerRow } from "./universe.ts";
 
@@ -85,15 +86,20 @@ export function toPosition(t: TickerRow): CarteraPosition {
   const ptBit = q?.targetMean ? ` · PT ${usd(q.targetMean)}` : "";
   const paceWord = flow.sessionDone ? "día" : "ritmo";
   const paceHint = flow.sessionDone ? " lo habitual" : " a esta hora";
+  const fadeCut = appSettings().cartera[t.category].sessionFadeRatio;
+  const paceLow =
+    flow.paceRatio != null && flow.paceSamples >= MIN_SLOT_SAMPLES && flow.paceRatio <= fadeCut;
   const paceShown = ratioBit(flow.paceRatio, flow.paceSamples);
   const burstShown = ratioBit(flow.burstRatio, flow.burstSamples);
-  const paceText = paceShown.endsWith("×") ? `${paceWord} ${paceShown}${paceHint}` : `${paceWord} ${paceShown}`;
+  const paceCore = paceShown.endsWith("×") ? `${paceWord} ${paceShown}${paceHint}` : `${paceWord} ${paceShown}`;
+  const paceText = paceLow && paceShown.endsWith("×") ? `${paceCore} bajo` : paceCore;
   const burstText = burstShown.endsWith("×") ? `5m ${burstShown}` : `5m ${burstShown}`;
 
   let icon = "grey";
   if (fair && price) icon = price > fair ? "red" : "green";
   else if (q) icon = q.changePct >= 0 ? "green" : "red";
   const hot = (flow.burstRatio != null && flow.burstRatio >= 3) || (flow.paceRatio != null && flow.paceRatio >= 1.5);
+  const fading = !hot && paceLow;
 
   return {
     symbol: t.symbol,
@@ -135,8 +141,8 @@ export function toPosition(t: TickerRow): CarteraPosition {
     line2: `${sharesBit ? `${sharesBit} · ` : ""}${fairBit} · ${ratingBit}${ptBit}`,
     line3: `${maBit("50d", q?.ma50 ?? null, ma50Delta)} · ${maBit("100d", q?.ma100 ?? null, ma100Delta)} · ${maBit("200d", q?.ma200 ?? null, ma200Delta)} · ${paceText} · ${burstText} · ${week52Line}`,
     icon_color: icon,
-    badge_icon: hot ? "mdi:fire" : "",
-    badge_color: hot ? "orange" : "",
+    badge_icon: hot ? "mdi:fire" : fading ? "mdi:trending-down" : "",
+    badge_color: hot ? "orange" : fading ? "grey" : "",
   };
 }
 

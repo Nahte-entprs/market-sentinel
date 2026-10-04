@@ -156,7 +156,8 @@ async function quoteChart(symbol: string) {
   const prev = dailyBase(price, timestamps, rawClose, result.meta?.previousClose);
   if (!price) throw new Error("precio 0");
   const changePct = prev ? ((price - prev) / prev) * 100 : 0;
-  const volume = Number(result.meta?.regularMarketVolume ?? volumes.at(-1) ?? 0);
+  const lastVol = [...rawVol].reverse().find((n): n is number => typeof n === "number") ?? 0;
+  const volume = Number(result.meta?.regularMarketVolume ?? lastVol);
   const histVol = historyVolumes(timestamps, rawVol);
   const avgVolume = histVol.length
     ? histVol.slice(-20).reduce((a, b) => a + b, 0) / Math.min(20, histVol.length)
@@ -194,8 +195,8 @@ function persistIntraday(symbol: string, timestamps: number[], closes: (number |
 }
 
 async function quoteIntraday(symbol: string) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=10d`;
-  const res = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(15000) });
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=1mo`;
+  const res = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(20000) });
   if (res.status === 429) throw new Error("429");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const j = (await res.json()) as ChartJson;

@@ -124,7 +124,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
         <p className="text-[11px] uppercase tracking-widest text-ha-muted">Acciones</p>
         <h1 className="text-xl font-medium">Cartera</h1>
         <p className="mt-1 text-[11px] leading-snug text-ha-muted">
-          Fair es cuánto está el precio por encima (rojo) o por debajo (verde) de tu valor justo. Las medias dicen lo mismo contra 50, 100 y 200 días. Ritmo compara el volumen de hoy con lo normal a esta hora; 5m compara la última vela con esa misma hora en días anteriores.
+          Fair es cuánto está el precio por encima (rojo) o por debajo (verde) de tu valor justo. Las medias dicen lo mismo contra 50, 100 y 200 días. Ritmo y 5m comparan el volumen de hoy, en horario de mercado, con la misma hora de los últimos 14 días. Ámbar es volumen al alza; «bajo» es que el ticker está perdiendo impulso.
         </p>
       </header>
 
@@ -166,6 +166,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
               const fairUp = (p.fair_delta_pct ?? 0) > 0;
               const fairDown = (p.fair_delta_pct ?? 0) < 0;
               const paceHot = p.pace_ratio != null && p.pace_samples >= 5 && p.pace_ratio >= band.sessionPaceRatio;
+              const paceFade = p.pace_ratio != null && p.pace_samples >= 5 && p.pace_ratio <= band.sessionFadeRatio;
               const burstHot = p.burst_ratio != null && p.burst_samples >= 5 && p.burst_ratio >= band.intradayVolumeRatio;
               const paceWord = p.session_done ? "día" : "ritmo";
               return (
@@ -224,8 +225,9 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                           {maLabel("200d", p.ma200, p.ma200_delta_pct)}
                         </p>
                         <p>
-                          <span className={paceHot ? "text-ha-amber" : ""}>
+                          <span className={paceHot ? "text-ha-amber" : paceFade ? "text-ha-text" : ""}>
                             {paceWord} {ratioLabel(p.pace_ratio, p.pace_samples)}
+                            {paceFade ? " bajo" : ""}
                           </span>
                           {" · "}
                           <span className={burstHot ? "text-ha-amber" : ""}>5m {ratioLabel(p.burst_ratio, p.burst_samples)}</span>

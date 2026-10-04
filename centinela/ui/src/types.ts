@@ -6,6 +6,7 @@ export type WatchBand = {
   trendPct: number;
   intradayVolumeRatio: number;
   sessionPaceRatio: number;
+  sessionFadeRatio: number;
 };
 
 export type AppSettings = {
@@ -37,6 +38,7 @@ export type AppSettings = {
     radarVolumeDaily: number;
     radarVolume5m: number;
     radarSessionPace: number;
+    radarSessionFade: number;
     sectorMovePct: number;
     steepQuietPct: number;
   };

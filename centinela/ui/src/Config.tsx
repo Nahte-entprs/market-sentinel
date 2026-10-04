@@ -88,10 +88,17 @@ function BandFields({
       />
       <Field
         title="Ritmo de la sesión"
-        hint="Volumen acumulado de hoy frente a lo normal a esta misma hora. 1,5 es un 50% más que un día típico a esa hora. Avisa al cruzarlo y otra vez si el ritmo sube 0,5 más. La apertura y el cierre no cuentan solos por ser apertura o cierre."
+        hint="Volumen acumulado de hoy frente a la misma hora en los últimos 14 días de mercado abierto. 1,5 es un 50% más que un día típico a esa hora. Avisa al cruzarlo y otra vez si el ritmo sube 0,5 más."
         value={band.sessionPaceRatio}
         step={0.1}
         onChange={(n) => onChange({ ...band, sessionPaceRatio: n })}
+      />
+      <Field
+        title="Impulso bajo"
+        hint="Por debajo de esto, a esta misma hora, el volumen está flojo frente a esos 14 días. 0,7 es un 30% menos de lo habitual. Avisa una vez, y otra si baja más. El alza pesa más: este aviso es más discreto y no sale en la primera media hora."
+        value={band.sessionFadeRatio}
+        step={0.05}
+        onChange={(n) => onChange({ ...band, sessionFadeRatio: n })}
       />
       <Field
         title="Volumen del día completo"
@@ -102,7 +109,7 @@ function BandFields({
       />
       <Field
         title="Vela de 5 minutos"
-        hint="La última vela comparada con la vela de la misma hora en días recientes. 3,5 es tres veces y media esa hora, no el mediodía."
+              hint="La última vela comparada con la misma hora de los últimos 14 días de mercado. 3,5 es tres veces y media esa hora, no el mediodía."
         value={band.intradayVolumeRatio}
         step={0.1}
         onChange={(n) => onChange({ ...band, intradayVolumeRatio: n })}
@@ -332,7 +339,7 @@ export function Config({ state, onReload }: { state: AppState; onReload: () => P
             />
             <Field
               title="Ritmo de la sesión"
-              hint="Acumulado de hoy contra lo normal a esta hora. Por encima de esto entra como motivo."
+              hint="Acumulado de hoy contra la misma hora de los últimos 14 días. Por encima entra como motivo fuerte; por debajo del corte de impulso bajo, como motivo menor."
               value={c.radarSessionPace}
               step={0.1}
               onChange={(n) => setC({ radarSessionPace: n })}

@@ -122,7 +122,7 @@ views:
             content: >
               No es consejo financiero. Fair lo cargas tú; rating y PT vienen de Yahoo.
               Fair en positivo: el precio está por encima de tu valor justo.
-              Ritmo: volumen de hoy contra lo normal a esta hora. 5m: la última vela contra esa misma hora.
+              Ritmo y 5m: volumen de hoy contra la misma hora de los últimos 14 días de mercado. «bajo» es impulso más débil.
 
           - type: custom:mushroom-title-card
             title: Holding

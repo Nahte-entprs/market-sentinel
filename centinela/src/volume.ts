@@ -11,10 +11,12 @@ export type IntradayBar = { ts: string; volume: number };
 export type VolumeSignal = {
   sessionDate: string | null;
   sessionDone: boolean;
+  /** Índice de la última vela cerrada (0 = 9:30 ET). Null si aún no hay vela cerrada. */
+  barSlot: number | null;
   /** Última vela de 5 min ya cerrada, contra la mediana de esa misma hora. */
   burstRatio: number | null;
   burstSamples: number;
-  /** Acumulado de la sesión hasta esa vela, contra la mediana histórica. */
+  /** Acumulado de la sesión hasta esa vela, contra la mediana de los últimos 14 días abiertos. */
   paceRatio: number | null;
   paceSamples: number;
 };
@@ -23,6 +25,8 @@ const OPEN_MIN = 9 * 60 + 30;
 const CLOSE_MIN = 16 * 60;
 const BAR_MS = 5 * 60_000;
 export const MIN_SLOT_SAMPLES = 5;
+/** Sesiones de mercado abierto contra las que se compara hoy. */
+export const LOOKBACK_SESSIONS = 14;
 
 const nyFmt = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
@@ -63,6 +67,7 @@ export function volumeSignal(bars: IntradayBar[], now = Date.now()): VolumeSigna
   const empty: VolumeSignal = {
     sessionDate: null,
     sessionDone: false,
+    barSlot: null,
     burstRatio: null,
     burstSamples: 0,
     paceRatio: null,
@@ -103,7 +108,7 @@ export function volumeSignal(bars: IntradayBar[], now = Date.now()): VolumeSigna
     return { ...empty, sessionDate, sessionDone };
   }
 
-  const prior = dates.filter((d) => d !== sessionDate);
+  const prior = dates.filter((d) => d !== sessionDate).slice(-LOOKBACK_SESSIONS);
   const burstBase: number[] = [];
   const paceBase: number[] = [];
   const needSlots = Math.max(1, Math.ceil((slot + 1) * 0.6));
@@ -127,6 +132,7 @@ export function volumeSignal(bars: IntradayBar[], now = Date.now()): VolumeSigna
   return {
     sessionDate,
     sessionDone,
+    barSlot: slot,
     burstSamples: burstBase.length,
     burstRatio: burstMed != null && burstMed >= 50 && burstBase.length >= MIN_SLOT_SAMPLES ? slots.get(slot)! / burstMed : null,
     paceSamples: paceBase.length,
