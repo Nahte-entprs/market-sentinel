@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { del, post } from "./api";
 import type { AppState, Category, Position } from "./types";
 
@@ -7,6 +7,42 @@ const LABELS: Record<Category, string> = {
   priority: "Priority",
   watchlist: "Watchlist",
 };
+
+const SECTION: Record<Category, { tone: string; wash: string; ink: string }> = {
+  holding: {
+    tone: "var(--sec-hold)",
+    wash: "color-mix(in srgb, var(--sec-hold) 16%, transparent)",
+    ink: "var(--sec-hold)",
+  },
+  priority: {
+    tone: "var(--sec-prio)",
+    wash: "color-mix(in srgb, var(--sec-prio) 18%, transparent)",
+    ink: "var(--sec-prio)",
+  },
+  watchlist: {
+    tone: "var(--sec-watch)",
+    wash: "color-mix(in srgb, var(--sec-watch) 16%, transparent)",
+    ink: "var(--sec-watch)",
+  },
+};
+
+function Chip({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "expensive" | "cheap" | "hot" | "fade" }) {
+  const style =
+    tone === "expensive"
+      ? { background: "color-mix(in srgb, var(--c-red) 18%, transparent)", color: "var(--c-red)" }
+      : tone === "cheap"
+        ? { background: "color-mix(in srgb, var(--c-green) 18%, transparent)", color: "var(--c-green)" }
+        : tone === "hot"
+          ? { background: "color-mix(in srgb, var(--c-amber) 22%, transparent)", color: "var(--c-amber)" }
+          : tone === "fade"
+            ? { background: "color-mix(in srgb, var(--c-text) 12%, transparent)", color: "var(--c-text)" }
+            : { background: "var(--c-card)", color: "var(--c-muted)" };
+  return (
+    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 tabular-nums" style={style}>
+      {children}
+    </span>
+  );
+}
 
 function ratioLabel(ratio: number | null, samples: number) {
   if (ratio == null || samples < 5) return samples > 0 ? `n/d (${samples}d)` : "n/d";
@@ -140,26 +176,40 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
         />
       </div>
 
-      {(["holding", "priority", "watchlist"] as Category[]).map((cat) => (
-        <section key={cat} className="rounded-2xl border border-ha-border bg-ha-card overflow-hidden">
-          <div className="flex items-center gap-2 px-3 py-2.5 border-b border-ha-border">
+      {(["holding", "priority", "watchlist"] as Category[]).map((cat) => {
+        const sec = SECTION[cat];
+        const rows = list(cat);
+        return (
+        <section
+          key={cat}
+          className="rounded-2xl border bg-ha-card overflow-hidden"
+          style={{ borderColor: `color-mix(in srgb, ${sec.tone} 55%, var(--c-border))` }}
+        >
+          <div className="flex items-center gap-2.5 px-3 py-3" style={{ background: sec.wash }}>
+            <span className="h-9 w-1.5 shrink-0 rounded-full" style={{ background: sec.tone }} />
             <div className="min-w-0 flex-1">
-              <h2 className="font-medium">{LABELS[cat]}</h2>
-              <p className="text-[11px] text-ha-muted">{cat === "holding" ? "Por valor de mercado" : "Orden manual"}</p>
+              <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: sec.ink }}>
+                {LABELS[cat]}
+              </h2>
+              <p className="text-[11px] text-ha-muted">
+                {cat === "holding" ? "Por valor de mercado" : "Orden manual"}
+                {rows.length ? ` · ${rows.length}` : ""}
+              </p>
             </div>
             <button
               type="button"
               disabled={busy || symbol.trim().length < 1}
               onClick={() => void addTo(cat)}
-              className="h-9 w-9 rounded-full bg-ha-accent text-ha-onaccent text-xl leading-none disabled:opacity-30"
+              className="h-9 w-9 rounded-full text-xl leading-none disabled:opacity-30"
+              style={{ background: sec.tone, color: "var(--c-bg)" }}
               aria-label={`Añadir a ${LABELS[cat]}`}
             >
               +
             </button>
           </div>
-          {list(cat).length === 0 && <p className="px-3 py-4 text-sm text-ha-muted">Vacío.</p>}
-          <ul>
-            {list(cat).map((p) => {
+          {rows.length === 0 && <p className="px-3 py-4 text-sm text-ha-muted">Vacío.</p>}
+          <ul className="space-y-2 px-2 py-2">
+            {rows.map((p) => {
               const up = (p.change_pct ?? 0) >= 0;
               const expanded = open === p.symbol;
               const band = state.settings.cartera[cat];
@@ -170,7 +220,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
               const burstHot = p.burst_ratio != null && p.burst_samples >= 5 && p.burst_ratio >= band.intradayVolumeRatio;
               const paceWord = p.session_done ? "día" : "ritmo";
               return (
-                <li key={p.symbol} className="border-t border-ha-border first:border-t-0">
+                <li key={p.symbol} className="rounded-xl border border-ha-border bg-ha-inset">
                   <div
                     className="flex items-stretch"
                     onPointerDown={() => startHold(p.symbol)}
@@ -183,56 +233,55 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                       onClick={() => toggle(p)}
                       className="flex-1 text-left px-3 py-3 min-w-0"
                     >
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="font-medium">{p.symbol}</span>
-                        <span className="text-sm tabular-nums">
-                          {p.price_fmt}
-                          <span className={`ml-2 ${up ? "text-ha-green" : "text-ha-red"}`}>{p.change_fmt}</span>
-                        </span>
-                      </div>
-                      <div className="mt-1 space-y-0.5 text-[11px] leading-snug text-ha-muted">
-                        {(p.shares > 0 || cat === "holding") && (
-                          <p>
-                            {p.shares > 0 ? (
-                              <>
-                                {p.shares_fmt} acc
-                                {p.market_value_fmt ? ` · ${p.market_value_fmt}` : ""}
-                              </>
-                            ) : (
-                              "Sin acciones"
-                            )}
-                          </p>
-                        )}
-                        <p>
-                          {p.fair_fmt ? (
-                            <>
-                              Fair {p.fair_fmt}{" "}
-                              <span className={fairUp ? "text-ha-red" : fairDown ? "text-ha-green" : ""}>{p.fair_delta_fmt}</span>
-                            </>
-                          ) : (
-                            "sin fair"
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-base font-semibold tracking-wide">{p.symbol}</p>
+                          {(p.shares > 0 || cat === "holding") && (
+                            <p className="mt-0.5 text-xs text-ha-muted">
+                              {p.shares > 0 ? (
+                                <>
+                                  {p.shares_fmt} acc
+                                  {p.market_value_fmt ? <span className="text-ha-text"> · {p.market_value_fmt}</span> : null}
+                                </>
+                              ) : (
+                                "Sin acciones"
+                              )}
+                            </p>
                           )}
-                          {" · "}
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-base font-medium tabular-nums">{p.price_fmt}</p>
+                          {p.change_fmt ? (
+                            <p className={`text-xs font-medium tabular-nums ${up ? "text-ha-green" : "text-ha-red"}`}>{p.change_fmt}</p>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="mt-2.5 flex flex-wrap gap-1.5">
+                        {p.fair_fmt ? (
+                          <Chip tone={fairUp ? "expensive" : fairDown ? "cheap" : "neutral"}>
+                            Fair {p.fair_fmt} {p.fair_delta_fmt}
+                          </Chip>
+                        ) : (
+                          <Chip>sin fair</Chip>
+                        )}
+                        <Chip>
                           {p.rec_label}
                           {p.analyst_count ? ` (${p.analyst_count})` : ""}
-                          {p.target_fmt ? ` · PT ${p.target_fmt}` : ""}
-                        </p>
-                        <p>
-                          {maLabel("50d", p.ma50, p.ma50_delta_pct)}
-                          {" · "}
-                          {maLabel("100d", p.ma100, p.ma100_delta_pct)}
-                          {" · "}
-                          {maLabel("200d", p.ma200, p.ma200_delta_pct)}
-                        </p>
-                        <p>
-                          <span className={paceHot ? "text-ha-amber" : paceFade ? "text-ha-text" : ""}>
-                            {paceWord} {ratioLabel(p.pace_ratio, p.pace_samples)}
-                            {paceFade ? " bajo" : ""}
-                          </span>
-                          {" · "}
-                          <span className={burstHot ? "text-ha-amber" : ""}>5m {ratioLabel(p.burst_ratio, p.burst_samples)}</span>
-                        </p>
-                        <p>{p.week52_line}</p>
+                        </Chip>
+                        {p.target_fmt ? <Chip>PT {p.target_fmt}</Chip> : null}
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        <Chip>{maLabel("50d", p.ma50, p.ma50_delta_pct)}</Chip>
+                        <Chip>{maLabel("100d", p.ma100, p.ma100_delta_pct)}</Chip>
+                        <Chip>{maLabel("200d", p.ma200, p.ma200_delta_pct)}</Chip>
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        <Chip tone={paceHot ? "hot" : paceFade ? "fade" : "neutral"}>
+                          {paceWord} {ratioLabel(p.pace_ratio, p.pace_samples)}
+                          {paceFade ? " bajo" : ""}
+                        </Chip>
+                        <Chip tone={burstHot ? "hot" : "neutral"}>5m {ratioLabel(p.burst_ratio, p.burst_samples)}</Chip>
+                        <Chip>{p.week52_line}</Chip>
                       </div>
                     </button>
                     {cat !== "holding" && (
@@ -257,7 +306,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                     )}
                   </div>
                   {expanded && (
-                    <div className="px-3 pb-3 space-y-2 bg-ha-inset">
+                    <div className="px-3 pb-3 space-y-2 border-t border-ha-border">
                       <div className="grid grid-cols-2 gap-2">
                         <label className="text-[11px] text-ha-muted">
                           Fair
@@ -298,7 +347,8 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
             })}
           </ul>
         </section>
-      ))}
+        );
+      })}
 
       {confirm && (
         <div className="fixed inset-0 z-20 bg-black/60 flex items-end justify-center p-4" onClick={() => setConfirm(null)}>

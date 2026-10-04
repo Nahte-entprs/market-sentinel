@@ -17,6 +17,9 @@
   --c-green: #4caf50;
   --c-red: #f44336;
   --c-amber: #ff9800;
+  --sec-hold: #3dd68c;
+  --sec-prio: #ffb74d;
+  --sec-watch: #64b5f6;
 }
 
 @media (prefers-color-scheme: light) {
@@ -35,6 +38,9 @@
     --c-green: #137333;
     --c-red: #c5221f;
     --c-amber: #b06000;
+    --sec-hold: #0d7a45;
+    --sec-prio: #8a4b00;
+    --sec-watch: #01579b;
   }
 }
 
