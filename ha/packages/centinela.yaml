@@ -38,7 +38,7 @@ automation:
             clickAction: "{{ panel }}"
             ttl: 0
             priority: high
-            tag: "centinela-{{ section }}"
+            tag: "{{ trigger.payload_json.tag | default('centinela-' ~ section) }}"
             group: "centinela-{{ section }}"
             actions:
               - action: URI

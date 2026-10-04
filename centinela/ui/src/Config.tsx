@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { post } from "./api";
+import { Lab } from "./Lab";
 import type { AppSettings, AppState, WatchBand } from "./types";
 
 function Field({
@@ -461,6 +462,7 @@ export function Config({ state, onReload }: { state: AppState; onReload: () => P
         Guardar
       </button>
       {msg && <p className="text-xs text-ha-muted text-center">{msg}</p>}
+      <Lab />
     </div>
   );
 }

@@ -35,6 +35,10 @@ export function mqttEnabled() {
   return Boolean(config.mqttUrl);
 }
 
+export function mqttConnected() {
+  return Boolean(client?.connected);
+}
+
 export async function startMqtt(handlers: {
   onAddTicker: (s: string) => void;
   onSaveTicker: () => void;

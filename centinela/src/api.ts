@@ -7,11 +7,13 @@ import fs from "node:fs";
 import { config, ROOT } from "./config.ts";
 import { getState, runJob } from "./jobs.ts";
 import { addIdea, listFactors, upsertTicker, removeTicker, parseCategory, moveTicker } from "./universe.ts";
-import { publishTextState } from "./mqtt.ts";
+import { mqttConnected, notifyUrl, publishNotify, publishTextState } from "./mqtt.ts";
 import type { MqttDrafts } from "./mqtt.ts";
 import { publishCarteraState } from "./portfolio.ts";
 import { appSettings, saveAppSettings } from "./settings.ts";
 import { listWindowComments } from "./reddit-social.ts";
+import { nowIso } from "./db.ts";
+import type { NotifySection } from "./types.ts";
 
 export const drafts: MqttDrafts = {
   ticker: "",
@@ -90,6 +92,27 @@ export function buildApi() {
     const body = await c.req.json().catch(() => null);
     if (!body || typeof body !== "object") return c.json({ error: "cuerpo inválido" }, 400);
     return c.json(saveAppSettings(body));
+  });
+  app.post("/api/test/notify", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body !== "object") return c.json({ error: "cuerpo inválido" }, 400);
+    const raw = body as { section?: string; title?: string; message?: string };
+    const allowed: NotifySection[] = ["radar", "cartera", "reddit", "ideas"];
+    const section = allowed.includes(raw.section as NotifySection) ? (raw.section as NotifySection) : "reddit";
+    const title = String(raw.title ?? "").trim().slice(0, 140);
+    const message = String(raw.message ?? "").trim().slice(0, 400);
+    if (!title || !message) return c.json({ error: "Falta título o mensaje" }, 400);
+    if (!mqttConnected()) return c.json({ error: "MQTT no está conectado. El aviso no salió del add-on." }, 503);
+    publishNotify({
+      section,
+      title,
+      message,
+      url: notifyUrl(section),
+      at: nowIso(),
+      tag: `centinela-test-${Date.now()}`,
+    });
+    console.log(`[test] notify ${section} · ${title}`);
+    return c.json({ ok: true });
   });
   app.get("/api/reddit/comments", (c) => {
     const source = c.req.query("source") === "subs" ? "subs" : "wsb";

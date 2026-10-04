@@ -147,6 +147,7 @@ export type CentinelaNotify = {
   message: string;
   url: string;
   at: string;
+  tag?: string;
 };
 
 export type TickerPace = {
