@@ -1,7 +1,7 @@
-import { db, json, nowIso, parseJson, getSetting } from "./db.ts";
+import { db, json, nowIso, parseJson, getSetting, getMeta, setMeta } from "./db.ts";
 import { isRth } from "./config.ts";
 import { listFactors, listIdeas, listTickers } from "./universe.ts";
-import { allQuoteSymbols, allQuotes, getQuote, lastBarVolumeVsMedian, refreshQuotes, refreshFundamentals, refreshIntraday, threeDayTrend } from "./quotes.ts";
+import { allQuoteSymbols, allQuotes, getQuote, readVolumeSignal, refreshQuotes, refreshFundamentals, refreshIntraday, threeDayTrend } from "./quotes.ts";
 import { emitIfNeeded, lastAlert, lastDigest, listAlerts, maybePushCrisis, maybePushReddit, maybePushTickerWatch, saveDigest } from "./alerts.ts";
 import { ingestFeeds, recentNews } from "./news.ts";
 import { extractEntities, lexiconPolarity, matchThesis } from "./entities.ts";
@@ -89,12 +89,21 @@ function whyPriceVol(symbol: string): WhyItem[] {
       weight: q.volumeRatio >= 4 ? 3 : 2,
     });
   }
-  const intra = lastBarVolumeVsMedian(symbol);
-  if (intra && intra >= band.radarVolume5m) {
+  const flow = readVolumeSignal(symbol);
+  if (flow.burstRatio != null && flow.burstRatio >= band.radarVolume5m) {
     items.push({
-      text: `volumen 5m ${intra.toFixed(1)}× mediana reciente`,
+      text: `vela 5m ${flow.burstRatio.toFixed(1)}× lo normal a esta hora`,
       kind: "volume",
-      weight: intra >= 5 ? 3 : 2,
+      weight: flow.burstRatio >= 5 ? 3 : 2,
+    });
+  }
+  if (flow.paceRatio != null && flow.paceRatio >= band.radarSessionPace) {
+    items.push({
+      text: flow.sessionDone
+        ? `volumen del día ${flow.paceRatio.toFixed(1)}× lo habitual`
+        : `ritmo ${flow.paceRatio.toFixed(1)}× lo habitual a esta hora`,
+      kind: "volume",
+      weight: flow.paceRatio >= 2 ? 3 : 2,
     });
   }
   return items;
@@ -141,16 +150,34 @@ async function volumeJob() {
 
     const bands = appSettings().cartera;
     const thresh = bands[t.category] ?? bands.watchlist;
+    const flow = readVolumeSignal(t.symbol);
     const reasons: string[] = [];
     if (Math.abs(q.changePct) >= thresh.changePct) {
       reasons.push(`${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% en el día`);
     }
     if (q.volumeRatio >= thresh.volumeRatio) {
-      reasons.push(`volumen diario ${q.volumeRatio.toFixed(1)}×`);
+      reasons.push(
+        flow.sessionDone
+          ? `volumen del día ${q.volumeRatio.toFixed(1)}× promedio`
+          : `volumen ya ${q.volumeRatio.toFixed(1)}× un día normal`,
+      );
     }
-    const intra = lastBarVolumeVsMedian(t.symbol);
-    if (intra && intra >= thresh.intradayVolumeRatio) {
-      reasons.push(`volumen 5m ${intra.toFixed(1)}× mediana`);
+    let paceFresh = false;
+    const paceKey = flow.sessionDate ? `vol_pace_${t.symbol}_${flow.sessionDate}` : "";
+    if (flow.burstRatio != null && flow.burstRatio >= thresh.intradayVolumeRatio) {
+      reasons.push(`vela 5m ${flow.burstRatio.toFixed(1)}× lo normal a esta hora`);
+    }
+    if (flow.paceRatio != null && flow.paceRatio >= thresh.sessionPaceRatio && paceKey) {
+      const prevPace = Number(getMeta(paceKey) || "0");
+      const already = prevPace > 0 && flow.paceRatio < prevPace + 0.5;
+      if (!already) {
+        paceFresh = true;
+        reasons.push(
+          flow.sessionDone
+            ? `ritmo del día ${flow.paceRatio.toFixed(1)}× lo habitual`
+            : `ritmo ${flow.paceRatio.toFixed(1)}× lo habitual a esta hora`,
+        );
+      }
     }
     const trend = threeDayTrend(t.symbol);
     if (trend && Math.abs(trend.pct) >= thresh.trendPct) {
@@ -164,11 +191,14 @@ async function volumeJob() {
       title: `${t.symbol} · ${t.category}`,
       message: `${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% · ${reasons.join(" · ")}`,
       changePct: q.changePct,
-      volumeRatio: Math.max(q.volumeRatio, intra ?? 0),
+      volumeRatio: Math.max(q.volumeRatio, flow.burstRatio ?? 0, flow.paceRatio ?? 0),
       reasons,
       at: nowIso(),
     });
-    if (ok) pushed.push(t.symbol);
+    if (ok) {
+      pushed.push(t.symbol);
+      if (paceFresh && paceKey && flow.paceRatio != null) setMeta(paceKey, String(flow.paceRatio));
+    }
   }
   const bits = [];
   if (fired.length) bits.push(`radar: ${fired.join(", ")}`);
@@ -607,7 +637,7 @@ export const JOBS: JobDef[] = [
     id: "volume.unusual",
     letter: "D",
     name: "Volumen inusual",
-    description: "Radar + vigilante de cartera (precio, volumen diario y 5m, 3d)",
+    description: "Radar + vigilante: precio, ritmo por hora, vela 5m contra su horario, 3d",
     cadenceMs: () => (isRth() ? 5 : 15) * 60_000,
     run: volumeJob,
   },

@@ -21,7 +21,7 @@ export const drafts: MqttDrafts = {
   ideaClaim: "",
   ideaFactor: "iran",
   category: "watchlist",
-  investedUsd: 0,
+  shares: 0,
   fairPrice: 0,
 };
 
@@ -53,14 +53,14 @@ export function buildApi() {
     const body = await c.req.json<{
       symbol?: string;
       category?: string;
-      investedUsd?: number;
+      shares?: number;
       fairPrice?: number;
     }>();
     try {
       const symbol = upsertTicker({
         symbol: body.symbol || drafts.ticker,
         category: parseCategory(body.category),
-        investedUsd: body.investedUsd,
+        shares: body.shares,
         fairPrice: body.fairPrice,
       });
       drafts.ticker = "";

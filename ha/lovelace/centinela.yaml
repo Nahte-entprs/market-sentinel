@@ -121,10 +121,12 @@ views:
           - type: markdown
             content: >
               No es consejo financiero. Fair lo cargas tú; rating y PT vienen de Yahoo.
+              Fair en positivo: el precio está por encima de tu valor justo.
+              Ritmo: volumen de hoy contra lo normal a esta hora. 5m: la última vela contra esa misma hora.
 
           - type: custom:mushroom-title-card
             title: Holding
-            subtitle: Orden por USD invertido
+            subtitle: Orden por valor de mercado (acciones × precio)
 
           - type: markdown
             content: >
@@ -224,14 +226,14 @@ views:
 
           - type: markdown
             content: >
-              **Guardar** añade o actualiza lista / USD / fair.
-              Subir y bajar solo aplican a Priority y Watchlist.
+              **Guardar** añade o actualiza lista, cantidad de acciones y fair.
+              El valor es acciones × precio. Subir y bajar solo aplican a Priority y Watchlist.
 
           - type: entities
             entities:
               - entity: text.centinela_nuevo_ticker
               - entity: select.centinela_ticker_categoria
-              - entity: number.centinela_invertido
+              - entity: number.centinela_acciones
               - entity: number.centinela_fair_price
               - entity: button.centinela_save_ticker
               - entity: button.centinela_remove_ticker

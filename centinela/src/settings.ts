@@ -6,6 +6,7 @@ export type WatchBand = {
   volumeRatio: number;
   trendPct: number;
   intradayVolumeRatio: number;
+  sessionPaceRatio: number;
 };
 
 export type AppSettings = {
@@ -36,6 +37,7 @@ export type AppSettings = {
     radarChangePct: number;
     radarVolumeDaily: number;
     radarVolume5m: number;
+    radarSessionPace: number;
     sectorMovePct: number;
     steepQuietPct: number;
   };
@@ -92,12 +94,13 @@ const DEFAULTS: AppSettings = {
     surgeMinGap: 1,
   },
   cartera: {
-    holding: { changePct: 2, volumeRatio: 2, trendPct: 4, intradayVolumeRatio: 3.5 },
-    priority: { changePct: 2, volumeRatio: 2, trendPct: 5, intradayVolumeRatio: 3.5 },
-    watchlist: { changePct: 3.5, volumeRatio: 2.5, trendPct: 8, intradayVolumeRatio: 4.5 },
+    holding: { changePct: 2, volumeRatio: 2, trendPct: 4, intradayVolumeRatio: 3.5, sessionPaceRatio: 1.5 },
+    priority: { changePct: 2, volumeRatio: 2, trendPct: 5, intradayVolumeRatio: 3.5, sessionPaceRatio: 1.5 },
+    watchlist: { changePct: 3.5, volumeRatio: 2.5, trendPct: 8, intradayVolumeRatio: 4.5, sessionPaceRatio: 1.8 },
     radarChangePct: 1.5,
     radarVolumeDaily: 2.5,
     radarVolume5m: 3,
+    radarSessionPace: 1.6,
     sectorMovePct: 2,
     steepQuietPct: 5,
   },
@@ -157,6 +160,7 @@ function band(raw: unknown, fallback: WatchBand): WatchBand {
     volumeRatio: num(o.volumeRatio, fallback.volumeRatio, 0.5, 50),
     trendPct: num(o.trendPct, fallback.trendPct, 0.1, 80),
     intradayVolumeRatio: num(o.intradayVolumeRatio, fallback.intradayVolumeRatio, 0.5, 50),
+    sessionPaceRatio: num(o.sessionPaceRatio, fallback.sessionPaceRatio, 1.05, 10),
   };
 }
 
@@ -196,6 +200,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
       radarChangePct: num(c.radarChangePct, d.cartera.radarChangePct, 0.1, 30),
       radarVolumeDaily: num(c.radarVolumeDaily, d.cartera.radarVolumeDaily, 0.5, 40),
       radarVolume5m: num(c.radarVolume5m, d.cartera.radarVolume5m, 0.5, 40),
+      radarSessionPace: num(c.radarSessionPace, d.cartera.radarSessionPace, 1.05, 10),
       sectorMovePct: num(c.sectorMovePct, d.cartera.sectorMovePct, 0.1, 30),
       steepQuietPct: num(c.steepQuietPct, d.cartera.steepQuietPct, 0.5, 40),
     },

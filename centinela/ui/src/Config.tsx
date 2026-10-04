@@ -87,15 +87,22 @@ function BandFields({
         onChange={(n) => onChange({ ...band, changePct: n })}
       />
       <Field
-        title="Volumen del día"
-        hint="Veces el volumen de hoy frente al promedio diario. 2 significa el doble de lo habitual."
+        title="Ritmo de la sesión"
+        hint="Volumen acumulado de hoy frente a lo normal a esta misma hora. 1,5 es un 50% más que un día típico a esa hora. Avisa al cruzarlo y otra vez si el ritmo sube 0,5 más. La apertura y el cierre no cuentan solos por ser apertura o cierre."
+        value={band.sessionPaceRatio}
+        step={0.1}
+        onChange={(n) => onChange({ ...band, sessionPaceRatio: n })}
+      />
+      <Field
+        title="Volumen del día completo"
+        hint="Veces un día entero normal. Durante la sesión solo entra si hoy ya superó ese múltiplo antes del cierre."
         value={band.volumeRatio}
         step={0.1}
         onChange={(n) => onChange({ ...band, volumeRatio: n })}
       />
       <Field
-        title="Volumen de 5 minutos"
-        hint="La última vela de 5 minutos comparada con la mediana de las horas previas. 3,5 es tres veces y media esa mediana."
+        title="Vela de 5 minutos"
+        hint="La última vela comparada con la vela de la misma hora en días recientes. 3,5 es tres veces y media esa hora, no el mediodía."
         value={band.intradayVolumeRatio}
         step={0.1}
         onChange={(n) => onChange({ ...band, intradayVolumeRatio: n })}
@@ -318,14 +325,21 @@ export function Config({ state, onReload }: { state: AppState; onReload: () => P
             />
             <Field
               title="Volumen diario"
-              hint="Veces el promedio diario. Por encima de esto, el volumen del día entra como motivo."
+              hint="Veces un día completo normal. Por encima de esto, el volumen del día entra como motivo."
               value={c.radarVolumeDaily}
               step={0.1}
               onChange={(n) => setC({ radarVolumeDaily: n })}
             />
             <Field
-              title="Volumen de 5 minutos"
-              hint="Veces la mediana reciente de velas de 5 minutos. Por encima de esto, esa vela entra como motivo."
+              title="Ritmo de la sesión"
+              hint="Acumulado de hoy contra lo normal a esta hora. Por encima de esto entra como motivo."
+              value={c.radarSessionPace}
+              step={0.1}
+              onChange={(n) => setC({ radarSessionPace: n })}
+            />
+            <Field
+              title="Vela de 5 minutos"
+              hint="Veces la vela de la misma hora en días recientes. Por encima de esto, esa vela entra como motivo."
               value={c.radarVolume5m}
               step={0.1}
               onChange={(n) => setC({ radarVolume5m: n })}

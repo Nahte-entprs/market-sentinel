@@ -9,6 +9,7 @@ export type TickerRow = {
   enabled: number;
   category: TickerCategory;
   invested_usd: number;
+  shares: number;
   fair_price: number | null;
   sort_order: number;
 };
@@ -25,6 +26,7 @@ function mapTicker(r: Record<string, unknown>): TickerRow {
     enabled: Number(r.enabled),
     category: CATEGORIES.has(cat as TickerCategory) ? (cat as TickerCategory) : "watchlist",
     invested_usd: Number(r.invested_usd ?? 0),
+    shares: Number(r.shares ?? 0),
     fair_price: r.fair_price == null ? null : Number(r.fair_price),
     sort_order: Number(r.sort_order ?? 0),
   };
@@ -95,7 +97,7 @@ function ensureJobRows() {
 }
 
 const TICKER_COLS =
-  "symbol, name, sector, kind, enabled, category, invested_usd, fair_price, sort_order";
+  "symbol, name, sector, kind, enabled, category, invested_usd, shares, fair_price, sort_order";
 
 export function listTickers(kind?: string): TickerRow[] {
   if (kind) {
@@ -111,7 +113,7 @@ export function listTickersByCategory(category: TickerCategory): TickerRow[] {
       .all(category) as Record<string, unknown>[]
   ).map(mapTicker);
   if (category === "holding") {
-    return rows.sort((a, b) => b.invested_usd - a.invested_usd || a.symbol.localeCompare(b.symbol));
+    return rows.sort((a, b) => a.symbol.localeCompare(b.symbol));
   }
   return rows.sort((a, b) => a.sort_order - b.sort_order || a.symbol.localeCompare(b.symbol));
 }
@@ -131,6 +133,12 @@ function normalizeSymbol(symbol: string) {
   return s;
 }
 
+function roundShares(n: number) {
+  if (!Number.isFinite(n) || n < 0) return 0;
+  const clamped = Math.min(n, 1_000_000_000);
+  return Math.round(clamped * 1e9) / 1e9;
+}
+
 function nextSortOrder(category: TickerCategory) {
   const row = db
     .prepare("SELECT COALESCE(MAX(sort_order), 0) AS m FROM tickers WHERE kind = 'ticker' AND category = ? AND enabled = 1")
@@ -147,14 +155,15 @@ export function upsertTicker(opts: {
   name?: string;
   sector?: string;
   category?: TickerCategory | string;
-  investedUsd?: number;
+  shares?: number;
   fairPrice?: number | null;
 }) {
   const s = normalizeSymbol(opts.symbol);
   const existing = getTicker(s);
   const category = parseCategory(opts.category ?? existing?.category);
-  const invested =
-    opts.investedUsd != null && Number.isFinite(opts.investedUsd) ? Math.max(0, opts.investedUsd) : (existing?.invested_usd ?? 0);
+  const invested = existing?.invested_usd ?? 0;
+  const shares =
+    opts.shares != null && Number.isFinite(opts.shares) ? roundShares(opts.shares) : (existing?.shares ?? 0);
   let fair: number | null;
   if (opts.fairPrice === undefined) {
     fair = existing?.fair_price ?? null;
@@ -171,17 +180,18 @@ export function upsertTicker(opts: {
   const sort = categoryChanged ? nextSortOrder(category) : existing.sort_order;
 
   db.prepare(
-    `INSERT INTO tickers (symbol, name, sector, kind, enabled, added_at, category, invested_usd, fair_price, sort_order)
-     VALUES (?, ?, ?, 'ticker', 1, ?, ?, ?, ?, ?)
+    `INSERT INTO tickers (symbol, name, sector, kind, enabled, added_at, category, invested_usd, shares, fair_price, sort_order)
+     VALUES (?, ?, ?, 'ticker', 1, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(symbol) DO UPDATE SET
        enabled = 1,
        name = excluded.name,
        sector = excluded.sector,
        category = excluded.category,
        invested_usd = excluded.invested_usd,
+       shares = excluded.shares,
        fair_price = excluded.fair_price,
        sort_order = excluded.sort_order`,
-  ).run(s, name, sector, nowIso(), category, invested, fair, sort);
+  ).run(s, name, sector, nowIso(), category, invested, shares, fair, sort);
   return s;
 }
 

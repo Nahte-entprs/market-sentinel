@@ -97,11 +97,15 @@ export type CarteraPosition = {
   symbol: string;
   name: string;
   category: TickerCategory;
-  invested: number;
-  invested_fmt: string;
+  shares: number;
+  shares_fmt: string;
+  market_value: number | null;
+  market_value_fmt: string | null;
   fair: number | null;
   fair_fmt: string | null;
+  /** (precio − fair) / fair. Positivo: el mercado está por encima del fair. */
   fair_delta_pct: number | null;
+  fair_delta_fmt: string;
   price: number | null;
   price_fmt: string;
   change_pct: number | null;
@@ -115,8 +119,14 @@ export type CarteraPosition = {
   ma100: number | null;
   ma200: number | null;
   ma50_delta_pct: number | null;
+  ma100_delta_pct: number | null;
+  ma200_delta_pct: number | null;
   volume_ratio: number | null;
-  intraday_vol_ratio: number | null;
+  burst_ratio: number | null;
+  burst_samples: number;
+  pace_ratio: number | null;
+  pace_samples: number;
+  session_done: boolean;
   week52_high: number | null;
   week52_low: number | null;
   week52_pos: number | null;

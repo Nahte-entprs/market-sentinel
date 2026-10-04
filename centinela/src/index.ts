@@ -31,7 +31,7 @@ await startMqtt({
       upsertTicker({
         symbol: drafts.ticker,
         category: parseCategory(drafts.category),
-        investedUsd: drafts.investedUsd,
+        shares: drafts.shares,
         fairPrice: drafts.fairPrice,
       });
       publishTextState(drafts);
@@ -44,7 +44,7 @@ await startMqtt({
     try {
       removeTicker(drafts.ticker);
       drafts.ticker = "";
-      drafts.investedUsd = 0;
+      drafts.shares = 0;
       drafts.fairPrice = 0;
       drafts.category = "watchlist";
       publishTextState(drafts);
@@ -65,7 +65,7 @@ await startMqtt({
     const t = getTicker(s);
     if (!t || t.enabled !== 1) return;
     drafts.category = t.category;
-    drafts.investedUsd = t.invested_usd;
+    drafts.shares = t.shares;
     drafts.fairPrice = t.fair_price ?? 0;
     publishTextState(drafts);
   },

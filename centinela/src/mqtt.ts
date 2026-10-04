@@ -9,7 +9,7 @@ export type MqttDrafts = {
   ideaClaim: string;
   ideaFactor: string;
   category: string;
-  investedUsd: number;
+  shares: number;
   fairPrice: number;
 };
 
@@ -75,7 +75,7 @@ export async function startMqtt(handlers: {
       handlers.onTickerDraft(msg);
     }
     if (topic === `${PREFIX}/cmd/ticker_category`) handlers.drafts.category = msg;
-    if (topic === `${PREFIX}/cmd/ticker_invested`) handlers.drafts.investedUsd = Number(msg) || 0;
+    if (topic === `${PREFIX}/cmd/ticker_shares`) handlers.drafts.shares = Number(msg) || 0;
     if (topic === `${PREFIX}/cmd/ticker_fair`) handlers.drafts.fairPrice = Number(msg) || 0;
     if (topic === `${PREFIX}/cmd/idea_title`) handlers.drafts.ideaTitle = msg;
     if (topic === `${PREFIX}/cmd/idea_claim`) handlers.drafts.ideaClaim = msg;
@@ -95,6 +95,11 @@ export async function startMqtt(handlers: {
   client.on("error", (err) => console.error("[mqtt]", err.message));
 }
 
+function forget(component: string, id: string) {
+  const topic = `${DISCOVERY}/${component}/centinela_${id}/config`;
+  client?.publish(topic, "", { retain: true });
+}
+
 function disc(component: string, id: string, extra: Record<string, unknown>) {
   const objectId = `centinela_${id}`;
   const topic = `${DISCOVERY}/${component}/${objectId}/config`;
@@ -108,6 +113,7 @@ function disc(component: string, id: string, extra: Record<string, unknown>) {
 }
 
 function publishDiscovery() {
+  forget("number", "invertido");
   disc("sensor", "regime", {
     name: "Régimen",
     state_topic: `${PREFIX}/sensor/regime`,
@@ -194,16 +200,15 @@ function publishDiscovery() {
     options: ["holding", "priority", "watchlist"],
     icon: "mdi:format-list-group",
   });
-  disc("number", "invertido", {
-    name: "USD invertido",
-    command_topic: `${PREFIX}/cmd/ticker_invested`,
-    state_topic: `${PREFIX}/number/invertido`,
+  disc("number", "acciones", {
+    name: "Acciones",
+    command_topic: `${PREFIX}/cmd/ticker_shares`,
+    state_topic: `${PREFIX}/number/acciones`,
     min: 0,
-    max: 10000000,
-    step: 50,
+    max: 1000000000,
+    step: 0.000000001,
     mode: "box",
-    unit_of_measurement: "USD",
-    icon: "mdi:cash",
+    icon: "mdi:counter",
   });
   disc("number", "fair_price", {
     name: "Fair price",
@@ -456,6 +461,6 @@ export function publishTextState(drafts: MqttDrafts) {
   pub(`${PREFIX}/text/idea_claim`, drafts.ideaClaim);
   pub(`${PREFIX}/select/idea_factor`, drafts.ideaFactor || "iran");
   pub(`${PREFIX}/select/ticker_categoria`, drafts.category || "watchlist");
-  pub(`${PREFIX}/number/invertido`, String(drafts.investedUsd ?? 0));
+  pub(`${PREFIX}/number/acciones`, String(drafts.shares ?? 0));
   pub(`${PREFIX}/number/fair_price`, String(drafts.fairPrice ?? 0));
 }

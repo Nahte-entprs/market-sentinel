@@ -5,6 +5,7 @@ export type WatchBand = {
   volumeRatio: number;
   trendPct: number;
   intradayVolumeRatio: number;
+  sessionPaceRatio: number;
 };
 
 export type AppSettings = {
@@ -35,6 +36,7 @@ export type AppSettings = {
     radarChangePct: number;
     radarVolumeDaily: number;
     radarVolume5m: number;
+    radarSessionPace: number;
     sectorMovePct: number;
     steepQuietPct: number;
   };
@@ -113,11 +115,13 @@ export type Position = {
   symbol: string;
   name: string;
   category: Category;
-  invested: number;
-  invested_fmt: string;
+  shares: number;
+  shares_fmt: string;
+  market_value_fmt: string | null;
   fair: number | null;
   fair_fmt: string | null;
   fair_delta_pct: number | null;
+  fair_delta_fmt: string;
   price: number | null;
   price_fmt: string;
   change_pct: number | null;
@@ -129,11 +133,14 @@ export type Position = {
   ma100: number | null;
   ma200: number | null;
   ma50_delta_pct: number | null;
-  volume_ratio: number | null;
-  intraday_vol_ratio?: number | null;
+  ma100_delta_pct: number | null;
+  ma200_delta_pct: number | null;
+  burst_ratio: number | null;
+  burst_samples: number;
+  pace_ratio: number | null;
+  pace_samples: number;
+  session_done: boolean;
   week52_line: string;
-  line2: string;
-  line3: string;
   icon_color: string;
 };
 

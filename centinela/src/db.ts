@@ -195,6 +195,7 @@ function ensureColumn(table: string, column: string, ddl: string) {
 
 ensureColumn("tickers", "category", "category TEXT NOT NULL DEFAULT 'watchlist'");
 ensureColumn("tickers", "invested_usd", "invested_usd REAL NOT NULL DEFAULT 0");
+ensureColumn("tickers", "shares", "shares REAL NOT NULL DEFAULT 0");
 ensureColumn("tickers", "fair_price", "fair_price REAL");
 ensureColumn("tickers", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0");
 ensureColumn("quotes", "ma50", "ma50 REAL");

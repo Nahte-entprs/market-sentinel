@@ -1,6 +1,7 @@
 import { db, nowIso } from "./db.ts";
 import { listTickers } from "./universe.ts";
 import type { QuoteSnap } from "./types.ts";
+import { nyDay, volumeSignal, type VolumeSignal } from "./volume.ts";
 
 const MACRO_SYMS = ["CL=F", "USDJPY=X", "^TNX", "^VIX"];
 const YAHOO_HEADERS = {
@@ -151,14 +152,14 @@ async function quoteChart(symbol: string) {
   persistBars(symbol, dates, rawClose, rawVol);
 
   const closes = rawClose.filter((n): n is number => typeof n === "number");
-  const volumes = rawVol.filter((n): n is number => typeof n === "number");
   const price = Number(result.meta?.regularMarketPrice ?? closes.at(-1) ?? 0);
-  const prev = Number(result.meta?.chartPreviousClose ?? result.meta?.previousClose ?? closes.at(-2) ?? price);
+  const prev = dailyBase(price, timestamps, rawClose, result.meta?.previousClose);
   if (!price) throw new Error("precio 0");
   const changePct = prev ? ((price - prev) / prev) * 100 : 0;
   const volume = Number(result.meta?.regularMarketVolume ?? volumes.at(-1) ?? 0);
-  const avgVolume = volumes.length
-    ? volumes.slice(-20).reduce((a, b) => a + b, 0) / Math.min(20, volumes.length)
+  const histVol = historyVolumes(timestamps, rawVol);
+  const avgVolume = histVol.length
+    ? histVol.slice(-20).reduce((a, b) => a + b, 0) / Math.min(20, histVol.length)
     : avgFromBars(symbol);
   persistQuote({
     symbol,
@@ -188,12 +189,12 @@ function persistIntraday(symbol: string, timestamps: number[], closes: (number |
     }
   });
   tx();
-  const cutoff = new Date(Date.now() - 5 * 86400_000).toISOString();
+  const cutoff = new Date(Date.now() - 30 * 86400_000).toISOString();
   db.prepare("DELETE FROM quote_intraday WHERE symbol = ? AND ts < ?").run(symbol, cutoff);
 }
 
 async function quoteIntraday(symbol: string) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=2d`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=10d`;
   const res = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(15000) });
   if (res.status === 429) throw new Error("429");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -231,25 +232,42 @@ export async function refreshIntraday(symbols: string[]): Promise<{ ok: number; 
   return { ok, errors: errors.slice(0, 10) };
 }
 
-/** Última vela 5m cerrada vs mediana de las ~4 h previas. */
-export function lastBarVolumeVsMedian(symbol: string): number | null {
+/** Vela de 5 min contra su misma hora, y ritmo del día contra esa misma hora. */
+export function readVolumeSignal(symbol: string): VolumeSignal {
+  const cutoff = new Date(Date.now() - 30 * 86400_000).toISOString();
   const rows = db
-    .prepare("SELECT ts, volume FROM quote_intraday WHERE symbol = ? ORDER BY ts DESC LIMIT 80")
-    .all(symbol) as { ts: string; volume: number }[];
-  const bars = rows.filter((r) => r.volume > 0);
-  if (bars.length < 12) return null;
-  const live = Date.now() - Date.parse(bars[0].ts) < 4 * 60_000;
-  const series = live ? bars.slice(1) : bars;
-  if (series.length < 12) return null;
-  const last = series[0].volume;
-  const rest = series
-    .slice(1, 49)
-    .map((b) => b.volume)
-    .sort((a, b) => a - b);
-  if (!rest.length) return null;
-  const median = rest[Math.floor(rest.length / 2)];
-  if (median < 50) return null;
-  return last / median;
+    .prepare("SELECT ts, volume FROM quote_intraday WHERE symbol = ? AND ts >= ? ORDER BY ts ASC")
+    .all(symbol, cutoff) as { ts: string; volume: number }[];
+  return volumeSignal(rows);
+}
+
+function historyVolumes(timestamps: number[], rawVol: (number | null)[]) {
+  const today = nyDay(Date.now());
+  const out: number[] = [];
+  const n = Math.min(timestamps.length, rawVol.length);
+  for (let i = 0; i < n; i++) {
+    const vol = rawVol[i];
+    if (typeof vol !== "number" || vol <= 0) continue;
+    if (nyDay(timestamps[i] * 1000) === today) continue;
+    out.push(vol);
+  }
+  return out;
+}
+
+/** Base del cambio del día: el cierre de ayer, nunca el ancla de un gráfico de 1 año. */
+function dailyBase(price: number, timestamps: number[], rawClose: (number | null)[], metaPrev?: number) {
+  const pairs: { ny: string; close: number }[] = [];
+  const n = Math.min(timestamps.length, rawClose.length);
+  for (let i = 0; i < n; i++) {
+    const close = rawClose[i];
+    if (typeof close === "number" && close > 0) pairs.push({ ny: nyDay(timestamps[i] * 1000), close });
+  }
+  const last = pairs.at(-1);
+  const prior = pairs.length >= 2 ? pairs[pairs.length - 2].close : 0;
+  if (last && last.ny === nyDay(Date.now()) && prior > 0) return prior;
+  if (metaPrev && metaPrev > 0 && last && Math.abs(metaPrev - last.close) / last.close <= 0.6) return metaPrev;
+  if (prior > 0) return prior;
+  return price;
 }
 
 export async function refreshQuotes(symbols: string[]): Promise<{ ok: number; errors: string[] }> {
