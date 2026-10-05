@@ -3,6 +3,7 @@ import { isRth } from "./config.ts";
 import { listTickers } from "./universe.ts";
 import type { QuoteSnap } from "./types.ts";
 import { nyDay, PROFILE_SLOTS, volumeCurve, volumeSignal, type VolumeSignal } from "./volume.ts";
+import { fetchCnbcDaily, fetchCnbcIntraday, fetchCnbcQuotes } from "./cnbc.ts";
 
 const MACRO_SYMS = ["CL=F", "USDJPY=X", "^TNX", "^VIX"];
 const YAHOO_HEADERS = {
@@ -470,6 +471,77 @@ function sessionMove(price: number, timestamps: number[], rawClose: (number | nu
   return { prev: prior, changePct: ((last.close - prior) / prior) * 100 };
 }
 
+function masFromStored(symbol: string) {
+  const rows = db.prepare("SELECT close FROM quote_bars WHERE symbol = ? AND close > 0 ORDER BY date ASC").all(symbol) as { close: number }[];
+  const closes = rows.map((r) => r.close);
+  return { ma50: sma(closes, 50), ma100: sma(closes, 100), ma200: sma(closes, 200) };
+}
+
+function writeMas(symbol: string) {
+  const mas = masFromStored(symbol);
+  db.prepare("UPDATE quotes SET ma50 = ?, ma100 = ?, ma200 = ? WHERE symbol = ?").run(mas.ma50, mas.ma100, mas.ma200, symbol);
+}
+
+export function needsDailyBars(symbol: string) {
+  const row = db.prepare("SELECT COUNT(*) AS n, MAX(date) AS d FROM quote_bars WHERE symbol = ?").get(symbol) as {
+    n: number;
+    d: string | null;
+  };
+  if (!row || row.n < 40 || !row.d) return true;
+  return Date.now() - Date.parse(`${row.d}T00:00:00Z`) > 5 * 86400_000;
+}
+
+/** Precios en una sola consulta a CNBC. El cambio es el del día, no el ancla de un año. */
+export async function refreshFromCnbc(symbols: string[], onEach?: () => void): Promise<{ ok: number; missing: string[]; error?: string }> {
+  const { quotes, missing, error } = await fetchCnbcQuotes(symbols);
+  if (error) console.error(`[quote] CNBC ${error}`);
+  let ok = 0;
+  for (const q of quotes) {
+    const mas = masFromStored(q.symbol);
+    persistQuote({
+      symbol: q.symbol,
+      price: q.price,
+      prevClose: q.prevClose,
+      changePct: q.changePct,
+      volume: q.volume,
+      avgVolume: q.avgVolume,
+      ma50: mas.ma50,
+      ma100: mas.ma100,
+      ma200: mas.ma200,
+    });
+    console.log(`[quote] ${q.symbol} ${q.price.toFixed(2)} ${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% · CNBC`);
+    ok++;
+    onEach?.();
+  }
+  for (const symbol of missing) {
+    noteQuoteError(symbol, "CNBC sin datos");
+    console.error(`[quote] ${symbol} CNBC sin datos`);
+  }
+  return { ok, missing, error };
+}
+
+export async function refreshCnbcDaily(symbol: string) {
+  const bars = await fetchCnbcDaily(symbol);
+  if (bars.length < 2) throw new Error("sin velas diarias");
+  persistBars(symbol, bars.map((b) => b.date), bars.map((b) => b.close), bars.map((b) => b.volume));
+  writeMas(symbol);
+  console.log(`[quote] ${symbol} ${bars.length} velas diarias · CNBC`);
+}
+
+export async function refreshCnbcCurve(symbol: string) {
+  const bars = await fetchCnbcIntraday(symbol);
+  if (bars.length < 10) throw new Error("sin velas 5m");
+  persistIntraday(
+    symbol,
+    bars.map((b) => Math.floor(b.ms / 1000)),
+    bars.map((b) => b.close),
+    bars.map((b) => b.volume),
+  );
+  const sessions = saveVolumeProfile(symbol);
+  console.log(`[quote] ${symbol} curva ${sessions} sesiones · CNBC`);
+  return sessions;
+}
+
 const refreshing = new Set<string>();
 
 /** Cotización de un ticker recién guardado, sin esperar al sondeo de toda la lista. */
@@ -479,12 +551,16 @@ export function refreshSymbolSoon(symbol: string, onDone?: () => void) {
   refreshing.add(s);
   void (async () => {
     try {
-      await quoteChart(s);
-      onDone?.();
+      await refreshFromCnbc([s], onDone);
       try {
-        await quoteIntraday(s);
+        await refreshCnbcDaily(s);
       } catch (err) {
-        console.error(`[quote] ${s} 5m: ${(err as Error).message}`);
+        console.error(`[quote] ${s} diario: ${(err as Error).message}`);
+      }
+      try {
+        await refreshCnbcCurve(s);
+      } catch (err) {
+        console.error(`[quote] ${s} curva: ${(err as Error).message}`);
       }
     } catch (err) {
       const msg = (err as Error).message;

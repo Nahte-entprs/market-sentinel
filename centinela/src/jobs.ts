@@ -1,7 +1,7 @@
 import { db, json, nowIso, parseJson, getSetting, getMeta, setMeta } from "./db.ts";
 import { isRth } from "./config.ts";
 import { listFactors, listIdeas, listTickers } from "./universe.ts";
-import { allQuoteSymbols, allQuotes, getQuote, readVolumeSignal, refreshQuotes, refreshFundamentals, refreshIntraday, resetYahooStrikes, symbolsToRenew, threeDayTrend } from "./quotes.ts";
+import { allQuoteSymbols, allQuotes, getQuote, needsDailyBars, readVolumeSignal, refreshFromCnbc, refreshCnbcCurve, refreshCnbcDaily, refreshFundamentals, symbolsToRenew, threeDayTrend } from "./quotes.ts";
 import { emitIfNeeded, lastAlert, lastDigest, listAlerts, maybePushCrisis, maybePushReddit, maybePushTickerWatch, saveDigest } from "./alerts.ts";
 import { ingestFeeds, recentNews } from "./news.ts";
 import { extractEntities, lexiconPolarity, matchThesis } from "./entities.ts";
@@ -58,27 +58,46 @@ async function quotesJob() {
   if (quotesBusy) return "cotizaciones ya en curso";
   quotesBusy = true;
   try {
-    resetYahooStrikes();
-    const gap = symbolsToRenew();
+    const symbols = allQuoteSymbols();
+    const before = symbolsToRenew();
     const show = (items: string[]) => (items.length ? items.join(", ") : "—");
-    console.log(`[quote] sin precio: ${show(gap.missing)} · desactualizados: ${show(gap.stale)} · sin curva: ${show(gap.noCurve)}`);
-    const first = [...gap.missing, ...gap.stale];
-    const prices = [...first, ...allQuoteSymbols().filter((s) => !first.includes(s))];
-    const r = await refreshQuotes(prices, () => publishCarteraState());
+    console.log(`[quote] CNBC · sin precio: ${show(before.missing)} · desactualizados: ${show(before.stale)} · sin curva: ${show(before.noCurve)}`);
+    const r = await refreshFromCnbc(symbols, () => publishCarteraState());
     publishCarteraState();
-    const curveBatch = r.stopped ? [] : gap.noCurve.slice(0, 3);
-    if (!r.stopped && gap.noCurve.length > curveBatch.length) {
-      console.log(`[quote] curvas esta vuelta: ${curveBatch.join(", ") || "—"} · quedan ${gap.noCurve.length - curveBatch.length}`);
+    if (r.ok === 0) throw new Error(r.error || r.missing[0] || "CNBC sin precios");
+    const needDaily = symbols.filter((s) => !r.missing.includes(s) && needsDailyBars(s));
+    let dailyOk = 0;
+    const dailyErr: string[] = [];
+    for (const symbol of needDaily) {
+      try {
+        await refreshCnbcDaily(symbol);
+        dailyOk++;
+        await new Promise((r) => setTimeout(r, 120));
+      } catch (err) {
+        const msg = (err as Error).message;
+        dailyErr.push(`${symbol}: ${msg}`);
+        console.error(`[quote] ${symbol} diario: ${msg}`);
+      }
     }
-    const intra = curveBatch.length
-      ? await refreshIntraday(curveBatch, () => publishCarteraState())
-      : { ok: 0, errors: [] as string[], stopped: false };
+    const curves = symbolsToRenew().noCurve.filter((s) => !r.missing.includes(s));
+    let curveOk = 0;
+    const curveErr: string[] = [];
+    for (const symbol of curves) {
+      try {
+        await refreshCnbcCurve(symbol);
+        curveOk++;
+        publishCarteraState();
+        await new Promise((r) => setTimeout(r, 120));
+      } catch (err) {
+        const msg = (err as Error).message;
+        curveErr.push(`${symbol}: ${msg}`);
+        console.error(`[quote] ${symbol} curva: ${msg}`);
+      }
+    }
     publishCarteraState();
-    if (r.errors.length && r.ok === 0 && !r.stopped) throw new Error(r.errors[0]);
-    const bits = [`${r.ok} precios`];
-    bits.push(curveBatch.length ? `${intra.ok} curvas` : r.stopped ? "curvas en pausa" : "curvas al día");
-    if (r.stopped || intra.stopped) bits.push("paré por 429");
-    else if (r.errors.length || intra.errors.length) bits.push(`${r.errors.length + intra.errors.length} errores`);
+    const bits = [`${r.ok} precios CNBC`, `${dailyOk} diarias`, curves.length ? `${curveOk} curvas` : "curvas al día"];
+    const failed = r.missing.length + dailyErr.length + curveErr.length;
+    if (failed) bits.push(`${failed} errores`);
     console.log(`[quote] listo · ${bits.join(" · ")}`);
     return bits.join(" · ");
   } finally {
@@ -763,7 +782,7 @@ export function startScheduler() {
       await drain();
       setTimeout(tick, def.cadenceMs());
     };
-    const first = def.id === "quotes.poll" ? 90_000 : 12_000 + Math.random() * 4000;
+    const first = def.id === "quotes.poll" ? 1500 : def.id === "fundamentals.poll" ? 8 * 60_000 : 12_000 + Math.random() * 4000;
     setTimeout(tick, first);
   }
 }

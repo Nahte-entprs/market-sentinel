@@ -47,7 +47,7 @@ function Chip({ children, tone = "neutral" }: { children: ReactNode; tone?: "neu
 function VolumeCurve({ avg, today }: { avg: number[]; today: number[] }) {
   const n = avg.length;
   if (n < 8 || !avg.some((v) => v > 0)) {
-    return <p className="mt-2 text-[11px] text-ha-muted">Sin perfil de volumen de 14 días.</p>;
+    return <p className="mt-2 text-[11px] text-ha-muted">Sin perfil de volumen.</p>;
   }
   const live = today.length === n ? today : [];
   const max = Math.max(...avg, ...live, 1);
@@ -75,7 +75,7 @@ function VolumeCurve({ avg, today }: { avg: number[]; today: number[] }) {
           </text>
         ))}
       </svg>
-      <p className="text-[10px] text-ha-muted">Habitual 14d · ámbar última sesión · 9:30 a 16:00</p>
+      <p className="text-[10px] text-ha-muted">Habitual · ámbar última sesión · 9:30 a 16:00</p>
     </div>
   );
 }
@@ -226,7 +226,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
         <p className="text-[11px] uppercase tracking-widest text-ha-muted">Acciones</p>
         <h1 className="text-xl font-medium">Cartera</h1>
         <p className="mt-1 text-[11px] leading-snug text-ha-muted">
-          Fair es cuánto está el precio por encima (rojo) o por debajo (verde) de tu valor justo. Las medias dicen lo mismo contra 50, 100 y 200 días. La curva es el volumen habitual de los últimos 14 días, cada 5 minutos; la línea ámbar es la última sesión. Ritmo y 5m comparan contra esa misma hora. Ámbar en un chip es volumen al alza; «bajo» es que el ticker está perdiendo impulso.
+          Fair es cuánto está el precio por encima (rojo) o por debajo (verde) de tu valor justo. Las medias dicen lo mismo contra 50, 100 y 200 días. La curva es el volumen habitual de las últimas sesiones, cada 5 minutos; la línea ámbar es la última sesión. Ritmo y 5m comparan contra esa misma hora. Ámbar en un chip es volumen al alza; «bajo» es que el ticker está perdiendo impulso.
         </p>
       </header>
 
