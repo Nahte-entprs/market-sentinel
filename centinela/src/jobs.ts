@@ -1,7 +1,7 @@
 import { db, json, nowIso, parseJson, getSetting, getMeta, setMeta } from "./db.ts";
 import { isRth } from "./config.ts";
 import { listFactors, listIdeas, listTickers } from "./universe.ts";
-import { allQuoteSymbols, allQuotes, getQuote, readVolumeSignal, refreshQuotes, refreshFundamentals, refreshIntraday, threeDayTrend } from "./quotes.ts";
+import { allQuoteSymbols, allQuotes, getQuote, readVolumeSignal, refreshQuotes, refreshFundamentals, refreshIntraday, symbolsToRenew, threeDayTrend } from "./quotes.ts";
 import { emitIfNeeded, lastAlert, lastDigest, listAlerts, maybePushCrisis, maybePushReddit, maybePushTickerWatch, saveDigest } from "./alerts.ts";
 import { ingestFeeds, recentNews } from "./news.ts";
 import { extractEntities, lexiconPolarity, matchThesis } from "./entities.ts";
@@ -58,15 +58,23 @@ async function quotesJob() {
   if (quotesBusy) return "cotizaciones ya en curso";
   quotesBusy = true;
   try {
-  const r = await refreshQuotes(allQuoteSymbols(), () => publishCarteraState());
-  publishCarteraState();
-  const intra = await refreshIntraday(listTickers("ticker").map((t) => t.symbol));
-  publishCarteraState();
-  if (r.errors.length && r.ok === 0) throw new Error(r.errors[0]);
-  const bits = [`${r.ok} cotizaciones`];
-  if (intra.ok) bits.push(`${intra.ok} barras 5m`);
-  if (r.errors.length || intra.errors.length) bits.push(`(${r.errors.length + intra.errors.length} errores)`);
-  return bits.join(" · ");
+    const gap = symbolsToRenew();
+    const show = (items: string[]) => (items.length ? items.join(", ") : "—");
+    console.log(`[quote] sin precio: ${show(gap.missing)} · desactualizados: ${show(gap.stale)} · sin curva: ${show(gap.noCurve)}`);
+    const first = [...gap.missing, ...gap.stale];
+    const prices = [...first, ...allQuoteSymbols().filter((s) => !first.includes(s))];
+    const r = await refreshQuotes(prices, () => publishCarteraState());
+    publishCarteraState();
+    const intra = gap.noCurve.length
+      ? await refreshIntraday(gap.noCurve, () => publishCarteraState())
+      : { ok: 0, errors: [] as string[] };
+    publishCarteraState();
+    if (r.errors.length && r.ok === 0) throw new Error(r.errors[0]);
+    const bits = [`${r.ok} precios`];
+    bits.push(gap.noCurve.length ? `${intra.ok} curvas` : "curvas al día");
+    if (r.errors.length || intra.errors.length) bits.push(`${r.errors.length + intra.errors.length} errores`);
+    console.log(`[quote] listo · ${bits.join(" · ")}`);
+    return bits.join(" · ");
   } finally {
     quotesBusy = false;
   }
@@ -730,6 +738,7 @@ async function drain() {
           }),
         ]);
         setJob(id, "ok", null, note);
+        if (id === "quotes.poll" && note) console.log(`[job] ${id} ${note}`);
       } catch (err) {
         const msg = (err as Error).message.slice(0, 240);
         console.error(`[job] ${id} error: ${msg}`);
@@ -757,7 +766,7 @@ export function startScheduler() {
       await drain();
       setTimeout(tick, def.cadenceMs());
     };
-    const first = def.id === "quotes.poll" ? 800 : 12_000 + Math.random() * 4000;
+    const first = def.id === "quotes.poll" ? 200 : 12_000 + Math.random() * 4000;
     setTimeout(tick, first);
   }
 }

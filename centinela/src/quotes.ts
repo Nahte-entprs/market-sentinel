@@ -1,4 +1,5 @@
 import { db, getMeta, nowIso, setMeta } from "./db.ts";
+import { isRth } from "./config.ts";
 import { listTickers } from "./universe.ts";
 import type { QuoteSnap } from "./types.ts";
 import { nyDay, PROFILE_SLOTS, volumeCurve, volumeSignal, type VolumeSignal } from "./volume.ts";
@@ -191,12 +192,33 @@ function isoDayFromUnix(sec: number) {
   return new Date(sec * 1000).toISOString().slice(0, 10);
 }
 
+async function yahooGet(path: string, timeoutMs: number): Promise<ChartJson> {
+  let last = "sin respuesta";
+  for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+    try {
+      const res = await fetch(`https://${host}${path}`, {
+        headers: YAHOO_HEADERS,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (res.status === 429) {
+        last = "429";
+        continue;
+      }
+      if (!res.ok) {
+        last = `HTTP ${res.status}`;
+        continue;
+      }
+      return (await res.json()) as ChartJson;
+    } catch (err) {
+      const name = (err as Error).name;
+      last = name === "TimeoutError" || name === "AbortError" ? "timeout" : (err as Error).message;
+    }
+  }
+  throw new Error(last);
+}
+
 async function quoteChart(symbol: string) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1y`;
-  const res = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(15000) });
-  if (res.status === 429) throw new Error("429");
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const j = (await res.json()) as ChartJson;
+  const j = await yahooGet(`/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1y`, 15000);
   const result = j.chart?.result?.[0];
   if (!result) throw new Error(j.chart?.error?.description || "sin datos");
   const timestamps = result.timestamp ?? [];
@@ -228,6 +250,7 @@ async function quoteChart(symbol: string) {
     ma100: sma(closes, 100),
     ma200: sma(closes, 200),
   });
+  console.log(`[quote] ${symbol} ${price.toFixed(2)} ${changePct >= 0 ? "+" : ""}${changePct.toFixed(1)}%`);
 }
 
 function persistIntraday(symbol: string, timestamps: number[], closes: (number | null)[], volumes: (number | null)[]) {
@@ -250,21 +273,18 @@ function persistIntraday(symbol: string, timestamps: number[], closes: (number |
 }
 
 async function quoteIntraday(symbol: string) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=1mo`;
-  const res = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(20000) });
-  if (res.status === 429) throw new Error("429");
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const j = (await res.json()) as ChartJson;
+  const j = await yahooGet(`/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=1mo`, 20000);
   const result = j.chart?.result?.[0];
   if (!result) throw new Error(j.chart?.error?.description || "sin barras 5m");
   const timestamps = result.timestamp ?? [];
   const rawClose = result.indicators?.quote?.[0]?.close ?? [];
   const rawVol = result.indicators?.quote?.[0]?.volume ?? [];
   persistIntraday(symbol, timestamps, rawClose, rawVol);
-  saveVolumeProfile(symbol);
+  const sessions = saveVolumeProfile(symbol);
+  console.log(`[quote] ${symbol} curva ${sessions} sesiones`);
 }
 
-export async function refreshIntraday(symbols: string[]): Promise<{ ok: number; errors: string[] }> {
+export async function refreshIntraday(symbols: string[], onEach?: () => void): Promise<{ ok: number; errors: string[] }> {
   const errors: string[] = [];
   let ok = 0;
   const unique = [...new Set(symbols)].filter(Boolean);
@@ -275,13 +295,17 @@ export async function refreshIntraday(symbols: string[]): Promise<{ ok: number; 
         await quoteIntraday(symbol);
         ok++;
         done = true;
+        onEach?.();
       } catch (err) {
         const msg = (err as Error).message;
         if (msg.includes("429") && attempt < 2) {
           await sleep(6000 * (attempt + 1));
           continue;
         }
-        if (attempt === 2) errors.push(`${symbol} 5m: ${msg}`.slice(0, 100));
+        if (attempt === 2) {
+          console.error(`[quote] ${symbol} curva: ${msg}`);
+          errors.push(`${symbol} 5m: ${msg}`.slice(0, 100));
+        }
       }
     }
     await sleep(450);
@@ -298,7 +322,7 @@ function loadIntraday(symbol: string) {
 
 function saveVolumeProfile(symbol: string) {
   const curve = volumeCurve(loadIntraday(symbol));
-  if (curve.samples < 5) return;
+  if (curve.samples < 5) return curve.samples;
   const ins = db.prepare(
     `INSERT INTO volume_profile (symbol, slot, avg_volume, samples, updated_at) VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(symbol, slot) DO UPDATE SET avg_volume=excluded.avg_volume, samples=excluded.samples, updated_at=excluded.updated_at`,
@@ -310,6 +334,37 @@ function saveVolumeProfile(symbol: string) {
     }
   });
   tx();
+  return curve.samples;
+}
+
+export type QuoteGaps = { missing: string[]; stale: string[]; noCurve: string[] };
+
+/** Tickers sin fila de precio, con precio viejo, o sin la curva de 14 días guardada. */
+export function symbolsToRenew(): QuoteGaps {
+  const priceLimit = (isRth() ? 6 : 12) * 60_000;
+  const curveLimit = 12 * 3600_000;
+  const tickers = new Set(listTickers("ticker").map((t) => t.symbol));
+  const missing: string[] = [];
+  const stale: string[] = [];
+  const noCurve: string[] = [];
+  const priceRow = db.prepare("SELECT price, ts FROM quotes WHERE symbol = ?");
+  const profileRow = db.prepare(
+    "SELECT COUNT(*) AS n, MAX(samples) AS samples, MAX(updated_at) AS ts FROM volume_profile WHERE symbol = ?",
+  );
+  for (const symbol of allQuoteSymbols()) {
+    const row = priceRow.get(symbol) as { price: number; ts: string } | undefined;
+    if (!row || !(row.price > 0)) missing.push(symbol);
+    else if (Date.now() - Date.parse(row.ts) > priceLimit) stale.push(symbol);
+    if (!tickers.has(symbol)) continue;
+    const profile = profileRow.get(symbol) as { n: number; samples: number | null; ts: string | null };
+    const fresh =
+      profile.n >= PROFILE_SLOTS - 2 &&
+      (profile.samples ?? 0) >= 5 &&
+      !!profile.ts &&
+      Date.now() - Date.parse(profile.ts) < curveLimit;
+    if (!fresh) noCurve.push(symbol);
+  }
+  return { missing, stale, noCurve };
 }
 
 /** Curva habitual de 14 días. Si la tabla está vacía y ya hay velas de 5 min, la calcula y la guarda. */
@@ -421,15 +476,15 @@ export async function refreshQuotes(symbols: string[], onFilled?: () => void): P
   const failed: string[] = [];
 
   for (const symbol of ordered) {
-    const wasMissing = missing.has(symbol);
     try {
       await fetchChart(symbol);
       ok++;
-      if (wasMissing) onFilled?.();
+      onFilled?.();
     } catch (err) {
       const msg = (err as Error).message;
       failed.push(symbol);
       noteQuoteError(symbol, msg);
+      console.error(`[quote] ${symbol} ${msg}`);
       errors.push(`${symbol}: ${msg}`.slice(0, 100));
     }
     await sleep(450);
@@ -440,7 +495,7 @@ export async function refreshQuotes(symbols: string[], onFilled?: () => void): P
       try {
         await quoteChart(symbol);
         ok++;
-        if (missing.has(symbol)) onFilled?.();
+        onFilled?.();
       } catch {
         /* el error de la primera pasada ya quedó anotado */
       }

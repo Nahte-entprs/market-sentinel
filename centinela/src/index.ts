@@ -3,11 +3,15 @@ import { startScheduler, runJob, listJobs } from "./jobs.ts";
 import { startMqtt, publishTextState } from "./mqtt.ts";
 import { startApi, drafts } from "./api.ts";
 import { publishCarteraState } from "./portfolio.ts";
-import { refreshSymbolSoon, repairMovesFromBars } from "./quotes.ts";
+import { refreshSymbolSoon, repairMovesFromBars, symbolsToRenew } from "./quotes.ts";
 import { config } from "./config.ts";
 
 seedIfNeeded();
 repairMovesFromBars();
+const gaps = symbolsToRenew();
+console.log(
+  `[quote] pendiente · sin precio ${gaps.missing.length} · desactualizados ${gaps.stale.length} · sin curva ${gaps.noCurve.length}`,
+);
 
 function refreshCartera() {
   try {

@@ -1,5 +1,5 @@
 name: "Centinela"
-version: "1.6.6"
+version: "1.6.7"
 slug: centinela
 description: "Radar de mercado. UI propia en la barra lateral (ingress); avisos en Companion."
 url: "https://github.com/Nahte-entprs/market-sentinel"
