@@ -3,6 +3,7 @@ import { startScheduler, runJob, listJobs } from "./jobs.ts";
 import { startMqtt, publishTextState } from "./mqtt.ts";
 import { startApi, drafts } from "./api.ts";
 import { publishCarteraState } from "./portfolio.ts";
+import { refreshSymbolSoon } from "./quotes.ts";
 import { config } from "./config.ts";
 
 seedIfNeeded();
@@ -21,6 +22,7 @@ await startMqtt({
       addTicker(s);
       drafts.ticker = "";
       publishTextState(drafts);
+      refreshSymbolSoon(s, refreshCartera);
       refreshCartera();
     } catch (e) {
       console.error("[ticker]", (e as Error).message);
@@ -28,13 +30,14 @@ await startMqtt({
   },
   onSaveTicker: () => {
     try {
-      upsertTicker({
+      const saved = upsertTicker({
         symbol: drafts.ticker,
         category: parseCategory(drafts.category),
         shares: drafts.shares,
         fairPrice: drafts.fairPrice,
       });
       publishTextState(drafts);
+      refreshSymbolSoon(saved, refreshCartera);
       refreshCartera();
     } catch (e) {
       console.error("[ticker]", (e as Error).message);

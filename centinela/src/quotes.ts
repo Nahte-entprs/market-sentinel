@@ -153,9 +153,10 @@ async function quoteChart(symbol: string) {
 
   const closes = rawClose.filter((n): n is number => typeof n === "number");
   const price = Number(result.meta?.regularMarketPrice ?? closes.at(-1) ?? 0);
-  const prev = dailyBase(price, timestamps, rawClose, result.meta?.previousClose);
+  const move = sessionMove(price, timestamps, rawClose);
   if (!price) throw new Error("precio 0");
-  const changePct = prev ? ((price - prev) / prev) * 100 : 0;
+  const prev = move.prev;
+  const changePct = move.changePct;
   const lastVol = [...rawVol].reverse().find((n): n is number => typeof n === "number") ?? 0;
   const volume = Number(result.meta?.regularMarketVolume ?? lastVol);
   const histVol = historyVolumes(timestamps, rawVol);
@@ -255,8 +256,8 @@ function historyVolumes(timestamps: number[], rawVol: (number | null)[]) {
   return out;
 }
 
-/** Base del cambio del día: el cierre de ayer, nunca el ancla de un gráfico de 1 año. */
-function dailyBase(price: number, timestamps: number[], rawClose: (number | null)[], metaPrev?: number) {
+/** Cambio contra la vela diaria anterior. Ignora chartPreviousClose: en un gráfico de 1 año ese campo es el precio de hace doce meses. */
+function sessionMove(price: number, timestamps: number[], rawClose: (number | null)[]) {
   const pairs: { ny: string; close: number }[] = [];
   const n = Math.min(timestamps.length, rawClose.length);
   for (let i = 0; i < n; i++) {
@@ -265,10 +266,52 @@ function dailyBase(price: number, timestamps: number[], rawClose: (number | null
   }
   const last = pairs.at(-1);
   const prior = pairs.length >= 2 ? pairs[pairs.length - 2].close : 0;
-  if (last && last.ny === nyDay(Date.now()) && prior > 0) return prior;
-  if (metaPrev && metaPrev > 0 && last && Math.abs(metaPrev - last.close) / last.close <= 0.6) return metaPrev;
-  if (prior > 0) return prior;
-  return price;
+  if (!last || !prior) return { prev: last?.close || price, changePct: 0 };
+  const today = nyDay(Date.now());
+  if (last.ny === today) return { prev: prior, changePct: ((price - prior) / prior) * 100 };
+  const leftLastClose = Math.abs(price - last.close) / last.close > 0.002;
+  if (leftLastClose) return { prev: last.close, changePct: ((price - last.close) / last.close) * 100 };
+  return { prev: prior, changePct: ((last.close - prior) / prior) * 100 };
+}
+
+const refreshing = new Set<string>();
+
+/** Cotización de un ticker recién guardado, sin esperar al sondeo de toda la lista. */
+export function refreshSymbolSoon(symbol: string, onDone?: () => void) {
+  const s = symbol.trim().toUpperCase();
+  if (!s || refreshing.has(s)) return;
+  refreshing.add(s);
+  void (async () => {
+    try {
+      await quoteChart(s);
+      onDone?.();
+      try {
+        await quoteIntraday(s);
+      } catch (err) {
+        console.error(`[quote] ${s} 5m: ${(err as Error).message}`);
+      }
+    } catch (err) {
+      console.error(`[quote] ${s}: ${(err as Error).message}`);
+    } finally {
+      refreshing.delete(s);
+      onDone?.();
+    }
+  })();
+}
+
+async function fetchChart(symbol: string) {
+  let last: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await quoteChart(symbol);
+      return;
+    } catch (err) {
+      last = err as Error;
+      if (!last.message.includes("429") || attempt === 2) throw last;
+      await sleep(800 * (attempt + 1));
+    }
+  }
+  throw last ?? new Error("sin cotización");
 }
 
 export async function refreshQuotes(symbols: string[]): Promise<{ ok: number; errors: string[] }> {
@@ -276,24 +319,31 @@ export async function refreshQuotes(symbols: string[]): Promise<{ ok: number; er
   let ok = 0;
   const unique = [...new Set(symbols)].filter(Boolean);
   if (!unique.length) return { ok: 0, errors: ["sin símbolos"] };
+  const missing = unique.filter((s) => !getQuote(s));
+  const ordered = [...missing, ...unique.filter((s) => !missing.includes(s))];
+  const failed: string[] = [];
 
-  for (const symbol of unique) {
-    let done = false;
-    for (let attempt = 0; attempt < 3 && !done; attempt++) {
+  for (const symbol of ordered) {
+    try {
+      await fetchChart(symbol);
+      ok++;
+    } catch (err) {
+      failed.push(symbol);
+      errors.push(`${symbol}: ${(err as Error).message}`.slice(0, 100));
+    }
+    await sleep(80);
+  }
+  if (failed.length) {
+    await sleep(2500);
+    for (const symbol of failed) {
       try {
         await quoteChart(symbol);
         ok++;
-        done = true;
-      } catch (err) {
-        const msg = (err as Error).message;
-        if (msg.includes("429") && attempt < 2) {
-          await sleep(800 * (attempt + 1));
-          continue;
-        }
-        if (attempt === 2) errors.push(`${symbol}: ${msg}`.slice(0, 100));
+      } catch {
+        /* el error de la primera pasada ya quedó anotado */
       }
+      await sleep(200);
     }
-    await sleep(80);
   }
   return { ok, errors: errors.slice(0, 10) };
 }

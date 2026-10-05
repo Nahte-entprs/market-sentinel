@@ -10,6 +10,7 @@ import { addIdea, listFactors, upsertTicker, removeTicker, parseCategory, moveTi
 import { mqttConnected, notifyUrl, publishNotify, publishTextState } from "./mqtt.ts";
 import type { MqttDrafts } from "./mqtt.ts";
 import { publishCarteraState } from "./portfolio.ts";
+import { refreshSymbolSoon } from "./quotes.ts";
 import { appSettings, saveAppSettings } from "./settings.ts";
 import { listWindowComments } from "./reddit-social.ts";
 import { nowIso } from "./db.ts";
@@ -66,6 +67,7 @@ export function buildApi() {
       drafts.ticker = "";
       publishCarteraState();
       publishTextState(drafts);
+      refreshSymbolSoon(symbol, () => publishCarteraState());
       return c.json({ symbol });
     } catch (e) {
       return c.json({ error: (e as Error).message }, 400);

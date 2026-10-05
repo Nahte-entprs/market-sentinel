@@ -8,7 +8,7 @@ export interface Summarizer {
 
 export function templateSummarize(c: Pick<Candidate, "title" | "why" | "score" | "confidence" | "jobIds">): string {
   const lines = c.why.slice(0, 8).map((w) => `• ${w.text}`);
-  return `${c.title}\nScore ${c.score.toFixed(1)}/10 · confianza ${Math.round(c.confidence)}% · jobs ${c.jobIds.join(", ")}\n${lines.join("\n")}\nNo es consejo financiero.`;
+  return `${c.title}\nScore ${c.score.toFixed(1)} · confianza ${Math.round(c.confidence)}% · ${c.jobIds.join(", ")}\n${lines.join("\n")}\nNo es consejo financiero.`;
 }
 
 export const TemplateSummarizer: Summarizer = {

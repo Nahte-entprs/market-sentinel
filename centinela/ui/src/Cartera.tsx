@@ -56,6 +56,22 @@ function maLabel(days: string, level: number | null, delta: number | null) {
   return `${days} ${px}${pct}`;
 }
 
+const FOLD_KEY = "centinela.cartera.folded";
+
+function readFolded(): Record<Category, boolean> {
+  const empty = { holding: false, priority: false, watchlist: false };
+  try {
+    const parsed = JSON.parse(localStorage.getItem(FOLD_KEY) || "") as Partial<Record<Category, boolean>>;
+    return {
+      holding: !!parsed.holding,
+      priority: !!parsed.priority,
+      watchlist: !!parsed.watchlist,
+    };
+  } catch {
+    return empty;
+  }
+}
+
 export function Cartera({ state, onReload }: { state: AppState; onReload: () => Promise<void> }) {
   const [symbol, setSymbol] = useState("");
   const [busy, setBusy] = useState(false);
@@ -65,6 +81,15 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
   const [sharesDraft, setSharesDraft] = useState("");
   const holdTimer = useRef<number | null>(null);
   const held = useRef(false);
+  const [folded, setFolded] = useState<Record<Category, boolean>>(readFolded);
+
+  function toggleSection(cat: Category) {
+    setFolded((prev) => {
+      const next = { ...prev, [cat]: !prev[cat] };
+      localStorage.setItem(FOLD_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
 
   async function addTo(category: Category) {
     const s = symbol.trim().toUpperCase();
@@ -73,6 +98,11 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
     try {
       await post("api/tickers", { symbol: s, category });
       setSymbol("");
+      setFolded((prev) => {
+        const next = { ...prev, [category]: false };
+        localStorage.setItem(FOLD_KEY, JSON.stringify(next));
+        return next;
+      });
       await onReload();
     } finally {
       setBusy(false);
@@ -179,35 +209,48 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
       {(["holding", "priority", "watchlist"] as Category[]).map((cat) => {
         const sec = SECTION[cat];
         const rows = list(cat);
+        const closed = folded[cat];
         return (
         <section
           key={cat}
           className="rounded-2xl border bg-ha-card overflow-hidden"
           style={{ borderColor: `color-mix(in srgb, ${sec.tone} 55%, var(--c-border))` }}
         >
-          <div className="flex items-center gap-2.5 px-3 py-3" style={{ background: sec.wash }}>
-            <span className="h-9 w-1.5 shrink-0 rounded-full" style={{ background: sec.tone }} />
-            <div className="min-w-0 flex-1">
-              <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: sec.ink }}>
-                {LABELS[cat]}
-              </h2>
-              <p className="text-[11px] text-ha-muted">
-                {cat === "holding" ? "Por valor de mercado" : "Orden manual"}
-                {rows.length ? ` · ${rows.length}` : ""}
-              </p>
-            </div>
+          <div className="flex items-center gap-2 px-2 py-2" style={{ background: sec.wash }}>
+            <button
+              type="button"
+              onClick={() => toggleSection(cat)}
+              aria-expanded={!closed}
+              className="flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-1 py-1 text-left"
+            >
+              <span className="h-9 w-1.5 shrink-0 rounded-full" style={{ background: sec.tone }} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold uppercase tracking-wide" style={{ color: sec.ink }}>
+                  {LABELS[cat]}
+                </span>
+                <span className="block text-[11px] text-ha-muted">
+                  {cat === "holding" ? "Por valor de mercado" : "Orden manual"}
+                  {rows.length ? ` · ${rows.length}` : ""}
+                </span>
+              </span>
+              <span className="px-1 text-sm text-ha-muted" aria-hidden>
+                {closed ? "▸" : "▾"}
+              </span>
+            </button>
             <button
               type="button"
               disabled={busy || symbol.trim().length < 1}
               onClick={() => void addTo(cat)}
-              className="h-9 w-9 rounded-full text-xl leading-none disabled:opacity-30"
+              className="h-9 w-9 shrink-0 rounded-full text-xl leading-none disabled:opacity-30"
               style={{ background: sec.tone, color: "var(--c-bg)" }}
               aria-label={`Añadir a ${LABELS[cat]}`}
             >
               +
             </button>
           </div>
-          {rows.length === 0 && <p className="px-3 py-4 text-sm text-ha-muted">Vacío.</p>}
+          {closed ? null : rows.length === 0 ? (
+            <p className="px-3 py-4 text-sm text-ha-muted">Vacío.</p>
+          ) : (
           <ul className="space-y-2 px-2 py-2">
             {rows.map((p) => {
               const up = (p.change_pct ?? 0) >= 0;
@@ -346,6 +389,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
               );
             })}
           </ul>
+          )}
         </section>
         );
       })}

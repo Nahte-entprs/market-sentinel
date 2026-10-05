@@ -54,6 +54,7 @@ function jobInfo(def: JobDef): JobInfo {
 
 async function quotesJob() {
   const r = await refreshQuotes(allQuoteSymbols());
+  publishCarteraState();
   const intra = await refreshIntraday(listTickers("ticker").map((t) => t.symbol));
   publishCarteraState();
   if (r.errors.length && r.ok === 0) throw new Error(r.errors[0]);
@@ -217,7 +218,7 @@ async function volumeJob() {
       symbol: t.symbol,
       category: t.category,
       title: `${t.symbol} · ${t.category}`,
-      message: `${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% · ${reasons.join(" · ")}`,
+      message: reasons.join(" · "),
       changePct: q.changePct,
       volumeRatio: Math.max(q.volumeRatio, flow.burstRatio ?? 0, flow.paceRatio ?? 0),
       reasons,
