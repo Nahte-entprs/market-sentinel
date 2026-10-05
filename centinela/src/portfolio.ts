@@ -1,5 +1,5 @@
 import { listTickers, listTickersByCategory } from "./universe.ts";
-import { getQuote, readVolumeSignal } from "./quotes.ts";
+import { getQuote, quoteError, readVolumeCurve, readVolumeSignal } from "./quotes.ts";
 import { publishCartera, publishWatchlist } from "./mqtt.ts";
 import { MIN_SLOT_SAMPLES } from "./volume.ts";
 import { appSettings } from "./settings.ts";
@@ -67,6 +67,7 @@ export function toPosition(t: TickerRow): CarteraPosition {
   const rec = recLabel(q?.recKey ?? null, q?.recMean ?? null);
   const vol = q?.volumeRatio ?? null;
   const flow = readVolumeSignal(t.symbol);
+  const curve = readVolumeCurve(t.symbol);
   const w52h = q?.week52High ?? null;
   const w52l = q?.week52Low ?? null;
   let week52Pos: number | null = null;
@@ -115,8 +116,8 @@ export function toPosition(t: TickerRow): CarteraPosition {
     fair_delta_fmt: fairDelta != null ? pctFmt(fairDelta) : "",
     price,
     price_fmt: price != null ? usd(price) : "n/d",
-    change_pct: q?.changePct ?? null,
-    change_fmt: q ? pctFmt(q.changePct) : "",
+    change_pct: q && q.changeTrusted ? q.changePct : null,
+    change_fmt: q && q.changeTrusted ? pctFmt(q.changePct) : "",
     rec_label: rec,
     rec_key: q?.recKey ?? null,
     analyst_count: q?.analystCount ?? null,
@@ -134,6 +135,9 @@ export function toPosition(t: TickerRow): CarteraPosition {
     pace_ratio: flow.paceRatio,
     pace_samples: flow.paceSamples,
     session_done: flow.sessionDone,
+    volume_avg: curve.avg.map((v) => Math.round(v)),
+    volume_today: curve.today.map((v) => Math.round(v)),
+    quote_error: q ? null : quoteError(t.symbol),
     week52_high: w52h,
     week52_low: w52l,
     week52_pos: week52Pos,

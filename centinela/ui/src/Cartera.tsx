@@ -44,6 +44,42 @@ function Chip({ children, tone = "neutral" }: { children: ReactNode; tone?: "neu
   );
 }
 
+function VolumeCurve({ avg, today }: { avg: number[]; today: number[] }) {
+  const n = avg.length;
+  if (n < 8 || !avg.some((v) => v > 0)) {
+    return <p className="mt-2 text-[11px] text-ha-muted">Sin perfil de volumen de 14 días.</p>;
+  }
+  const live = today.length === n ? today : [];
+  const max = Math.max(...avg, ...live, 1);
+  const w = 280;
+  const h = 46;
+  const x = (i: number) => (n === 1 ? 0 : (i / (n - 1)) * w);
+  const y = (v: number) => h - 8 - (v / max) * (h - 12);
+  const line = (values: number[]) => values.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const area = `${line(avg)} L${w},${h - 8} L0,${h - 8} Z`;
+  const hours = [
+    { slot: 6, label: "10" },
+    { slot: 30, label: "12" },
+    { slot: 54, label: "14" },
+    { slot: 77, label: "16" },
+  ];
+  return (
+    <div className="mt-2">
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-12" role="img" aria-label="Volumen habitual de 14 días y última sesión">
+        <path d={area} fill="color-mix(in srgb, var(--c-muted) 28%, transparent)" />
+        <path d={line(avg)} fill="none" stroke="var(--c-muted)" strokeWidth="1.4" />
+        {live.some((v) => v > 0) ? <path d={line(live)} fill="none" stroke="var(--c-amber)" strokeWidth="1.6" /> : null}
+        {hours.map((hour) => (
+          <text key={hour.label} x={x(Math.min(hour.slot, n - 1))} y={h - 1} textAnchor="middle" fontSize="8" fill="var(--c-muted)">
+            {hour.label}
+          </text>
+        ))}
+      </svg>
+      <p className="text-[10px] text-ha-muted">Habitual 14d · ámbar última sesión · 9:30 a 16:00</p>
+    </div>
+  );
+}
+
 function ratioLabel(ratio: number | null, samples: number) {
   if (ratio == null || samples < 5) return samples > 0 ? `n/d (${samples}d)` : "n/d";
   return `${ratio.toFixed(1)}×`;
@@ -190,7 +226,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
         <p className="text-[11px] uppercase tracking-widest text-ha-muted">Acciones</p>
         <h1 className="text-xl font-medium">Cartera</h1>
         <p className="mt-1 text-[11px] leading-snug text-ha-muted">
-          Fair es cuánto está el precio por encima (rojo) o por debajo (verde) de tu valor justo. Las medias dicen lo mismo contra 50, 100 y 200 días. Ritmo y 5m comparan el volumen de hoy, en horario de mercado, con la misma hora de los últimos 14 días. Ámbar es volumen al alza; «bajo» es que el ticker está perdiendo impulso.
+          Fair es cuánto está el precio por encima (rojo) o por debajo (verde) de tu valor justo. Las medias dicen lo mismo contra 50, 100 y 200 días. La curva es el volumen habitual de los últimos 14 días, cada 5 minutos; la línea ámbar es la última sesión. Ritmo y 5m comparan contra esa misma hora. Ámbar en un chip es volumen al alza; «bajo» es que el ticker está perdiendo impulso.
         </p>
       </header>
 
@@ -296,6 +332,8 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                           <p className="text-base font-medium tabular-nums">{p.price_fmt}</p>
                           {p.change_fmt ? (
                             <p className={`text-xs font-medium tabular-nums ${up ? "text-ha-green" : "text-ha-red"}`}>{p.change_fmt}</p>
+                          ) : p.quote_error ? (
+                            <p className="max-w-36 text-[10px] leading-tight text-ha-red">{p.quote_error}</p>
                           ) : null}
                         </div>
                       </div>
@@ -326,6 +364,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                         <Chip tone={burstHot ? "hot" : "neutral"}>5m {ratioLabel(p.burst_ratio, p.burst_samples)}</Chip>
                         <Chip>{p.week52_line}</Chip>
                       </div>
+                      <VolumeCurve avg={p.volume_avg ?? []} today={p.volume_today ?? []} />
                     </button>
                     {cat !== "holding" && (
                       <div className="flex flex-col border-l border-ha-border">

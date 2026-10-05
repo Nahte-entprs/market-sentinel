@@ -91,6 +91,8 @@ export type QuoteSnap = {
   analystCount: number | null;
   week52High: number | null;
   week52Low: number | null;
+  /** Falso cuando el porcentaje guardado no se puede apoyar en dos velas diarias. */
+  changeTrusted: boolean;
 };
 
 export type CarteraPosition = {
@@ -127,6 +129,11 @@ export type CarteraPosition = {
   pace_ratio: number | null;
   pace_samples: number;
   session_done: boolean;
+  /** Promedio de 14 sesiones, 78 cubetas de 5 min desde las 9:30 ET. */
+  volume_avg: number[];
+  /** Última sesión, mismas cubetas. */
+  volume_today: number[];
+  quote_error: string | null;
   week52_high: number | null;
   week52_low: number | null;
   week52_pos: number | null;

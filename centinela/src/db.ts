@@ -88,6 +88,15 @@ CREATE TABLE IF NOT EXISTS quote_intraday (
   PRIMARY KEY (symbol, ts)
 );
 
+CREATE TABLE IF NOT EXISTS volume_profile (
+  symbol TEXT NOT NULL,
+  slot INTEGER NOT NULL,
+  avg_volume REAL NOT NULL,
+  samples INTEGER NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (symbol, slot)
+);
+
 CREATE TABLE IF NOT EXISTS news (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,

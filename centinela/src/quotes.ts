@@ -1,7 +1,7 @@
-import { db, nowIso } from "./db.ts";
+import { db, getMeta, nowIso, setMeta } from "./db.ts";
 import { listTickers } from "./universe.ts";
 import type { QuoteSnap } from "./types.ts";
-import { nyDay, volumeSignal, type VolumeSignal } from "./volume.ts";
+import { nyDay, PROFILE_SLOTS, volumeCurve, volumeSignal, type VolumeSignal } from "./volume.ts";
 
 const MACRO_SYMS = ["CL=F", "USDJPY=X", "^TNX", "^VIX"];
 const YAHOO_HEADERS = {
@@ -45,11 +45,15 @@ type QuoteRow = {
 };
 
 function rowToSnap(r: QuoteRow): QuoteSnap {
+  const fixed = moveFromBars(r.symbol, r.price);
+  const changePct = fixed ? fixed.changePct : r.change_pct;
+  const prevClose = fixed ? fixed.prev : r.prev_close;
   return {
     symbol: r.symbol,
     price: r.price,
-    prevClose: r.prev_close,
-    changePct: r.change_pct,
+    prevClose,
+    changePct,
+    changeTrusted: fixed != null || Math.abs(changePct) <= 80,
     volume: r.volume,
     avgVolume: r.avg_volume,
     volumeRatio: r.volume_ratio,
@@ -64,6 +68,55 @@ function rowToSnap(r: QuoteRow): QuoteSnap {
     week52High: r.week52_high ?? null,
     week52Low: r.week52_low ?? null,
   };
+}
+
+function quoteErrorKey(symbol: string) {
+  return `quote_err_${symbol}`;
+}
+
+export function quoteError(symbol: string): string | null {
+  const v = getMeta(quoteErrorKey(symbol));
+  return v && v.trim() ? v : null;
+}
+
+function noteQuoteError(symbol: string, message: string | null) {
+  const key = quoteErrorKey(symbol);
+  if (!message) {
+    db.prepare("DELETE FROM meta WHERE key = ?").run(key);
+    return;
+  }
+  setMeta(key, message.slice(0, 140));
+}
+
+/** El porcentaje visible sale de las dos últimas velas diarias, nunca del ancla de un gráfico de un año. */
+function moveFromBars(symbol: string, price: number): { prev: number; changePct: number } | null {
+  const bars = db
+    .prepare("SELECT date, close FROM quote_bars WHERE symbol = ? AND close > 0 ORDER BY date ASC")
+    .all(symbol) as { date: string; close: number }[];
+  if (bars.length < 2 || !(price > 0)) return null;
+  const last = bars[bars.length - 1];
+  const prior = bars[bars.length - 2];
+  if (!(prior.close > 0) || !(last.close > 0)) return null;
+  const today = nyDay(Date.now());
+  const utcToday = new Date().toISOString().slice(0, 10);
+  if (last.date === today || last.date === utcToday) {
+    return { prev: prior.close, changePct: ((price - prior.close) / prior.close) * 100 };
+  }
+  if (Math.abs(price - last.close) / last.close > 0.002) {
+    return { prev: last.close, changePct: ((price - last.close) / last.close) * 100 };
+  }
+  return { prev: prior.close, changePct: ((last.close - prior.close) / prior.close) * 100 };
+}
+
+/** Reescribe el cambio del día con las velas ya guardadas, sin esperar a Yahoo. */
+export function repairMovesFromBars() {
+  const rows = db.prepare("SELECT symbol, price FROM quotes").all() as { symbol: string; price: number }[];
+  const upd = db.prepare("UPDATE quotes SET prev_close = ?, change_pct = ? WHERE symbol = ?");
+  for (const row of rows) {
+    const fixed = moveFromBars(row.symbol, row.price);
+    if (!fixed) continue;
+    upd.run(fixed.prev, fixed.changePct, row.symbol);
+  }
 }
 
 function persistQuote(q: {
@@ -98,6 +151,7 @@ function persistQuote(q: {
     q.ma100,
     q.ma200,
   );
+  noteQuoteError(q.symbol, null);
 }
 
 function persistBars(symbol: string, dates: string[], closes: (number | null)[], volumes: (number | null)[]) {
@@ -207,6 +261,7 @@ async function quoteIntraday(symbol: string) {
   const rawClose = result.indicators?.quote?.[0]?.close ?? [];
   const rawVol = result.indicators?.quote?.[0]?.volume ?? [];
   persistIntraday(symbol, timestamps, rawClose, rawVol);
+  saveVolumeProfile(symbol);
 }
 
 export async function refreshIntraday(symbols: string[]): Promise<{ ok: number; errors: string[] }> {
@@ -223,24 +278,64 @@ export async function refreshIntraday(symbols: string[]): Promise<{ ok: number; 
       } catch (err) {
         const msg = (err as Error).message;
         if (msg.includes("429") && attempt < 2) {
-          await sleep(800 * (attempt + 1));
+          await sleep(6000 * (attempt + 1));
           continue;
         }
         if (attempt === 2) errors.push(`${symbol} 5m: ${msg}`.slice(0, 100));
       }
     }
-    await sleep(80);
+    await sleep(450);
   }
   return { ok, errors: errors.slice(0, 10) };
 }
 
-/** Vela de 5 min contra su misma hora, y ritmo del día contra esa misma hora. */
-export function readVolumeSignal(symbol: string): VolumeSignal {
+function loadIntraday(symbol: string) {
   const cutoff = new Date(Date.now() - 30 * 86400_000).toISOString();
-  const rows = db
+  return db
     .prepare("SELECT ts, volume FROM quote_intraday WHERE symbol = ? AND ts >= ? ORDER BY ts ASC")
     .all(symbol, cutoff) as { ts: string; volume: number }[];
-  return volumeSignal(rows);
+}
+
+function saveVolumeProfile(symbol: string) {
+  const curve = volumeCurve(loadIntraday(symbol));
+  if (curve.samples < 5) return;
+  const ins = db.prepare(
+    `INSERT INTO volume_profile (symbol, slot, avg_volume, samples, updated_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(symbol, slot) DO UPDATE SET avg_volume=excluded.avg_volume, samples=excluded.samples, updated_at=excluded.updated_at`,
+  );
+  const ts = nowIso();
+  const tx = db.transaction(() => {
+    for (let slot = 0; slot < PROFILE_SLOTS; slot++) {
+      ins.run(symbol, slot, curve.avg[slot] ?? 0, curve.samples, ts);
+    }
+  });
+  tx();
+}
+
+/** Curva habitual de 14 días. Si la tabla está vacía y ya hay velas de 5 min, la calcula y la guarda. */
+export function readVolumeCurve(symbol: string): { avg: number[]; today: number[] } {
+  const stored = db
+    .prepare("SELECT slot, avg_volume, samples, updated_at FROM volume_profile WHERE symbol = ? ORDER BY slot ASC")
+    .all(symbol) as { slot: number; avg_volume: number; samples: number; updated_at: string }[];
+  const fresh =
+    stored.length >= PROFILE_SLOTS - 2 &&
+    stored[0] &&
+    Date.now() - Date.parse(stored[0].updated_at) < 6 * 3600_000;
+  const bars = loadIntraday(symbol);
+  const curve = volumeCurve(bars);
+  if (!fresh && curve.samples >= 5) saveVolumeProfile(symbol);
+  const avg = fresh
+    ? Array.from({ length: PROFILE_SLOTS }, (_, i) => stored.find((r) => r.slot === i)?.avg_volume ?? 0)
+    : curve.samples >= 5
+      ? curve.avg
+      : [];
+  const today = curve.today.some((v) => v > 0) ? curve.today : [];
+  return { avg, today };
+}
+
+/** Vela de 5 min contra su misma hora, y ritmo del día contra esa misma hora. */
+export function readVolumeSignal(symbol: string): VolumeSignal {
+  return volumeSignal(loadIntraday(symbol));
 }
 
 function historyVolumes(timestamps: number[], rawVol: (number | null)[]) {
@@ -291,7 +386,9 @@ export function refreshSymbolSoon(symbol: string, onDone?: () => void) {
         console.error(`[quote] ${s} 5m: ${(err as Error).message}`);
       }
     } catch (err) {
-      console.error(`[quote] ${s}: ${(err as Error).message}`);
+      const msg = (err as Error).message;
+      noteQuoteError(s, msg);
+      console.error(`[quote] ${s}: ${msg}`);
     } finally {
       refreshing.delete(s);
       onDone?.();
@@ -308,41 +405,46 @@ async function fetchChart(symbol: string) {
     } catch (err) {
       last = err as Error;
       if (!last.message.includes("429") || attempt === 2) throw last;
-      await sleep(800 * (attempt + 1));
+      await sleep(6000 * (attempt + 1));
     }
   }
   throw last ?? new Error("sin cotización");
 }
 
-export async function refreshQuotes(symbols: string[]): Promise<{ ok: number; errors: string[] }> {
+export async function refreshQuotes(symbols: string[], onFilled?: () => void): Promise<{ ok: number; errors: string[] }> {
   const errors: string[] = [];
   let ok = 0;
   const unique = [...new Set(symbols)].filter(Boolean);
   if (!unique.length) return { ok: 0, errors: ["sin símbolos"] };
-  const missing = unique.filter((s) => !getQuote(s));
-  const ordered = [...missing, ...unique.filter((s) => !missing.includes(s))];
+  const missing = new Set(unique.filter((s) => !getQuote(s)));
+  const ordered = [...missing, ...unique.filter((s) => !missing.has(s))];
   const failed: string[] = [];
 
   for (const symbol of ordered) {
+    const wasMissing = missing.has(symbol);
     try {
       await fetchChart(symbol);
       ok++;
+      if (wasMissing) onFilled?.();
     } catch (err) {
+      const msg = (err as Error).message;
       failed.push(symbol);
-      errors.push(`${symbol}: ${(err as Error).message}`.slice(0, 100));
+      noteQuoteError(symbol, msg);
+      errors.push(`${symbol}: ${msg}`.slice(0, 100));
     }
-    await sleep(80);
+    await sleep(450);
   }
   if (failed.length) {
-    await sleep(2500);
+    await sleep(8000);
     for (const symbol of failed) {
       try {
         await quoteChart(symbol);
         ok++;
+        if (missing.has(symbol)) onFilled?.();
       } catch {
         /* el error de la primera pasada ya quedó anotado */
       }
-      await sleep(200);
+      await sleep(700);
     }
   }
   return { ok, errors: errors.slice(0, 10) };

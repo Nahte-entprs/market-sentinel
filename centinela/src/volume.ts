@@ -139,3 +139,59 @@ export function volumeSignal(bars: IntradayBar[], now = Date.now()): VolumeSigna
     paceRatio: paceMed != null && paceMed >= 200 && paceBase.length >= MIN_SLOT_SAMPLES ? todayCum / paceMed : null,
   };
 }
+
+/** 9:30–16:00 ET, una cubeta cada 5 minutos. 78 puntos. */
+export const PROFILE_SLOTS = ((CLOSE_MIN - OPEN_MIN) / 5) | 0;
+
+export type VolumeCurve = {
+  /** Promedio de volumen en cada cubeta de 5 min, últimas 14 sesiones completas. */
+  avg: number[];
+  /** Volumen de la última sesión en las mismas cubetas. */
+  today: number[];
+  samples: number;
+};
+
+function groupSlots(bars: IntradayBar[]) {
+  const byDate = new Map<string, Map<number, number>>();
+  for (const bar of bars) {
+    const ms = Date.parse(bar.ts);
+    if (!Number.isFinite(ms) || !(bar.volume > 0)) continue;
+    const ny = nyParts(ms);
+    const slot = rthSlot(ny.minutes);
+    if (slot == null || slot >= PROFILE_SLOTS) continue;
+    let slots = byDate.get(ny.date);
+    if (!slots) {
+      slots = new Map();
+      byDate.set(ny.date, slots);
+    }
+    slots.set(slot, (slots.get(slot) ?? 0) + bar.volume);
+  }
+  return byDate;
+}
+
+/** Curva normal del día. El eje se dibuja por hora; cada punto es una cubeta de 5 min. */
+export function volumeCurve(bars: IntradayBar[], now = Date.now()): VolumeCurve {
+  const empty = PROFILE_SLOTS;
+  const byDate = groupSlots(bars);
+  const dates = [...byDate.keys()].sort();
+  const todayDate = nyParts(now).date;
+  const latest = dates.filter((d) => d <= todayDate).at(-1) ?? null;
+  const prior = dates.filter((d) => d !== latest).slice(-LOOKBACK_SESSIONS);
+  const sum = Array.from({ length: empty }, () => 0);
+  const count = Array.from({ length: empty }, () => 0);
+  for (const date of prior) {
+    const day = byDate.get(date);
+    if (!day) continue;
+    for (const [slot, vol] of day) {
+      sum[slot] += vol;
+      count[slot] += 1;
+    }
+  }
+  const avg = sum.map((v, i) => (count[i] > 0 ? v / count[i] : 0));
+  const today = Array.from({ length: empty }, () => 0);
+  const live = latest ? byDate.get(latest) : undefined;
+  if (live) {
+    for (const [slot, vol] of live) today[slot] = vol;
+  }
+  return { avg, today, samples: prior.length };
+}

@@ -52,8 +52,13 @@ function jobInfo(def: JobDef): JobInfo {
   };
 }
 
+let quotesBusy = false;
+
 async function quotesJob() {
-  const r = await refreshQuotes(allQuoteSymbols());
+  if (quotesBusy) return "cotizaciones ya en curso";
+  quotesBusy = true;
+  try {
+  const r = await refreshQuotes(allQuoteSymbols(), () => publishCarteraState());
   publishCarteraState();
   const intra = await refreshIntraday(listTickers("ticker").map((t) => t.symbol));
   publishCarteraState();
@@ -62,6 +67,9 @@ async function quotesJob() {
   if (intra.ok) bits.push(`${intra.ok} barras 5m`);
   if (r.errors.length || intra.errors.length) bits.push(`(${r.errors.length + intra.errors.length} errores)`);
   return bits.join(" · ");
+  } finally {
+    quotesBusy = false;
+  }
 }
 
 async function fundamentalsJob() {
@@ -76,7 +84,7 @@ function whyPriceVol(symbol: string): WhyItem[] {
   if (!q) return [];
   const band = appSettings().cartera;
   const items: WhyItem[] = [];
-  if (Math.abs(q.changePct) >= band.radarChangePct) {
+  if (q.changeTrusted && Math.abs(q.changePct) >= band.radarChangePct) {
     items.push({
       text: `${symbol} ${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% a ${q.price}`,
       kind: "price",
@@ -165,7 +173,7 @@ async function volumeJob() {
     const thresh = bands[t.category] ?? bands.watchlist;
     const flow = readVolumeSignal(t.symbol);
     const reasons: string[] = [];
-    if (Math.abs(q.changePct) >= thresh.changePct) {
+    if (q.changeTrusted && Math.abs(q.changePct) >= thresh.changePct) {
       reasons.push(`${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% en el día`);
     }
     if (q.volumeRatio >= thresh.volumeRatio) {
@@ -714,7 +722,13 @@ async function drain() {
       setJob(id, "running", null, null);
       publishJob(jobInfo(def));
       try {
-        const note = await def.run();
+        const budget = id === "quotes.poll" ? 12 * 60_000 : 4 * 60_000;
+        const note = await Promise.race([
+          def.run(),
+          sleep(budget).then(() => {
+            throw new Error("tiempo agotado");
+          }),
+        ]);
         setJob(id, "ok", null, note);
       } catch (err) {
         const msg = (err as Error).message.slice(0, 240);
@@ -730,14 +744,21 @@ async function drain() {
   return drainPromise;
 }
 
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 export function startScheduler() {
-  for (const def of JOBS) {
+  const ordered = [JOBS.find((j) => j.id === "quotes.poll")!, ...JOBS.filter((j) => j.id !== "quotes.poll")];
+  for (const def of ordered) {
     const tick = async () => {
-      queue.push(def.id);
+      if (def.id === "quotes.poll") queue.unshift(def.id);
+      else queue.push(def.id);
       await drain();
       setTimeout(tick, def.cadenceMs());
     };
-    setTimeout(tick, 1500 + Math.random() * 2500);
+    const first = def.id === "quotes.poll" ? 800 : 12_000 + Math.random() * 4000;
+    setTimeout(tick, first);
   }
 }
 

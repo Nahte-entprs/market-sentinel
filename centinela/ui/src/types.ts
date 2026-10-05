@@ -142,6 +142,9 @@ export type Position = {
   pace_ratio: number | null;
   pace_samples: number;
   session_done: boolean;
+  volume_avg: number[];
+  volume_today: number[];
+  quote_error: string | null;
   week52_line: string;
   icon_color: string;
 };
