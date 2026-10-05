@@ -1,7 +1,7 @@
 import { db, json, nowIso, parseJson, getSetting, getMeta, setMeta } from "./db.ts";
 import { isRth } from "./config.ts";
 import { listFactors, listIdeas, listTickers } from "./universe.ts";
-import { allQuoteSymbols, allQuotes, getQuote, readVolumeSignal, refreshQuotes, refreshFundamentals, refreshIntraday, symbolsToRenew, threeDayTrend } from "./quotes.ts";
+import { allQuoteSymbols, allQuotes, getQuote, readVolumeSignal, refreshQuotes, refreshFundamentals, refreshIntraday, resetYahooStrikes, symbolsToRenew, threeDayTrend } from "./quotes.ts";
 import { emitIfNeeded, lastAlert, lastDigest, listAlerts, maybePushCrisis, maybePushReddit, maybePushTickerWatch, saveDigest } from "./alerts.ts";
 import { ingestFeeds, recentNews } from "./news.ts";
 import { extractEntities, lexiconPolarity, matchThesis } from "./entities.ts";
@@ -58,6 +58,7 @@ async function quotesJob() {
   if (quotesBusy) return "cotizaciones ya en curso";
   quotesBusy = true;
   try {
+    resetYahooStrikes();
     const gap = symbolsToRenew();
     const show = (items: string[]) => (items.length ? items.join(", ") : "—");
     console.log(`[quote] sin precio: ${show(gap.missing)} · desactualizados: ${show(gap.stale)} · sin curva: ${show(gap.noCurve)}`);
@@ -65,14 +66,19 @@ async function quotesJob() {
     const prices = [...first, ...allQuoteSymbols().filter((s) => !first.includes(s))];
     const r = await refreshQuotes(prices, () => publishCarteraState());
     publishCarteraState();
-    const intra = gap.noCurve.length
-      ? await refreshIntraday(gap.noCurve, () => publishCarteraState())
-      : { ok: 0, errors: [] as string[] };
+    const curveBatch = r.stopped ? [] : gap.noCurve.slice(0, 3);
+    if (!r.stopped && gap.noCurve.length > curveBatch.length) {
+      console.log(`[quote] curvas esta vuelta: ${curveBatch.join(", ") || "—"} · quedan ${gap.noCurve.length - curveBatch.length}`);
+    }
+    const intra = curveBatch.length
+      ? await refreshIntraday(curveBatch, () => publishCarteraState())
+      : { ok: 0, errors: [] as string[], stopped: false };
     publishCarteraState();
-    if (r.errors.length && r.ok === 0) throw new Error(r.errors[0]);
+    if (r.errors.length && r.ok === 0 && !r.stopped) throw new Error(r.errors[0]);
     const bits = [`${r.ok} precios`];
-    bits.push(gap.noCurve.length ? `${intra.ok} curvas` : "curvas al día");
-    if (r.errors.length || intra.errors.length) bits.push(`${r.errors.length + intra.errors.length} errores`);
+    bits.push(curveBatch.length ? `${intra.ok} curvas` : r.stopped ? "curvas en pausa" : "curvas al día");
+    if (r.stopped || intra.stopped) bits.push("paré por 429");
+    else if (r.errors.length || intra.errors.length) bits.push(`${r.errors.length + intra.errors.length} errores`);
     console.log(`[quote] listo · ${bits.join(" · ")}`);
     return bits.join(" · ");
   } finally {
@@ -83,6 +89,7 @@ async function quotesJob() {
 async function fundamentalsJob() {
   const r = await refreshFundamentals(listTickers("ticker").map((t) => t.symbol));
   publishCarteraState();
+  if (r.stopped && r.ok === 0) return "Yahoo en pausa";
   if (r.errors.length && r.ok === 0) throw new Error(r.errors[0]);
   return `${r.ok} fundamentals` + (r.errors.length ? ` (${r.errors.length} errores)` : "");
 }
@@ -730,13 +737,7 @@ async function drain() {
       setJob(id, "running", null, null);
       publishJob(jobInfo(def));
       try {
-        const budget = id === "quotes.poll" ? 12 * 60_000 : 4 * 60_000;
-        const note = await Promise.race([
-          def.run(),
-          sleep(budget).then(() => {
-            throw new Error("tiempo agotado");
-          }),
-        ]);
+        const note = await def.run();
         setJob(id, "ok", null, note);
         if (id === "quotes.poll" && note) console.log(`[job] ${id} ${note}`);
       } catch (err) {
@@ -753,10 +754,6 @@ async function drain() {
   return drainPromise;
 }
 
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 export function startScheduler() {
   const ordered = [JOBS.find((j) => j.id === "quotes.poll")!, ...JOBS.filter((j) => j.id !== "quotes.poll")];
   for (const def of ordered) {
@@ -766,7 +763,7 @@ export function startScheduler() {
       await drain();
       setTimeout(tick, def.cadenceMs());
     };
-    const first = def.id === "quotes.poll" ? 200 : 12_000 + Math.random() * 4000;
+    const first = def.id === "quotes.poll" ? 90_000 : 12_000 + Math.random() * 4000;
     setTimeout(tick, first);
   }
 }

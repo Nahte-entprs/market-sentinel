@@ -192,33 +192,70 @@ function isoDayFromUnix(sec: number) {
   return new Date(sec * 1000).toISOString().slice(0, 10);
 }
 
-async function yahooGet(path: string, timeoutMs: number): Promise<ChartJson> {
+const YAHOO_GAP_MS = 2500;
+let nextYahooAt = 0;
+let yahooPauseUntil = 0;
+let yahooStrikes = 0;
+let yahooPauseLogged = false;
+
+export function resetYahooStrikes() {
+  yahooStrikes = 0;
+}
+
+/** Dos símbolos seguidos limitados: esta vuelta no sigue golpeando a Yahoo. */
+export function noteYahooStrike(): boolean {
+  yahooStrikes += 1;
+  return yahooStrikes >= 2;
+}
+
+export function yahooCooling(): boolean {
+  return yahooPauseUntil - Date.now() > 15_000;
+}
+
+async function yahooJson<T>(path: string, timeoutMs: number): Promise<T> {
+  const hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
   let last = "sin respuesta";
-  for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+  for (let i = 0; i < hosts.length; i++) {
+    const wait = Math.max(0, nextYahooAt - Date.now(), yahooPauseUntil - Date.now());
+    if (yahooPauseUntil > Date.now() && wait > 5_000 && !yahooPauseLogged) {
+      yahooPauseLogged = true;
+      console.log(`[quote] Yahoo 429, pausa ${Math.ceil(wait / 1000)}s`);
+    }
+    if (wait > 0) await sleep(wait);
+    yahooPauseLogged = false;
+    nextYahooAt = Date.now() + YAHOO_GAP_MS;
     try {
-      const res = await fetch(`https://${host}${path}`, {
+      const res = await fetch(`https://${hosts[i]}${path}`, {
         headers: YAHOO_HEADERS,
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (res.status === 429) {
-        last = "429";
-        continue;
+        const retryAfter = Number(res.headers.get("retry-after"));
+        const pause = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 120_000) : 40_000;
+        yahooPauseUntil = Date.now() + pause;
+        nextYahooAt = yahooPauseUntil;
+        throw new Error("429");
       }
       if (!res.ok) {
         last = `HTTP ${res.status}`;
-        continue;
+        if (res.status >= 500 && i === 0) continue;
+        throw new Error(last);
       }
-      return (await res.json()) as ChartJson;
+      yahooStrikes = 0;
+      return (await res.json()) as T;
     } catch (err) {
+      const msg = (err as Error).message;
+      if (msg === "429") throw err;
       const name = (err as Error).name;
-      last = name === "TimeoutError" || name === "AbortError" ? "timeout" : (err as Error).message;
+      last = name === "TimeoutError" || name === "AbortError" ? "timeout" : msg;
+      if (i === hosts.length - 1) throw new Error(last);
     }
   }
   throw new Error(last);
 }
 
 async function quoteChart(symbol: string) {
-  const j = await yahooGet(`/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1y`, 15000);
+  const j = await yahooJson<ChartJson>(`/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1y`, 15000);
   const result = j.chart?.result?.[0];
   if (!result) throw new Error(j.chart?.error?.description || "sin datos");
   const timestamps = result.timestamp ?? [];
@@ -273,7 +310,7 @@ function persistIntraday(symbol: string, timestamps: number[], closes: (number |
 }
 
 async function quoteIntraday(symbol: string) {
-  const j = await yahooGet(`/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=1mo`, 20000);
+  const j = await yahooJson<ChartJson>(`/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=1mo`, 20000);
   const result = j.chart?.result?.[0];
   if (!result) throw new Error(j.chart?.error?.description || "sin barras 5m");
   const timestamps = result.timestamp ?? [];
@@ -284,33 +321,42 @@ async function quoteIntraday(symbol: string) {
   console.log(`[quote] ${symbol} curva ${sessions} sesiones`);
 }
 
-export async function refreshIntraday(symbols: string[], onEach?: () => void): Promise<{ ok: number; errors: string[] }> {
+export async function refreshIntraday(symbols: string[], onEach?: () => void): Promise<{ ok: number; errors: string[]; stopped: boolean }> {
   const errors: string[] = [];
   let ok = 0;
+  let stopped = false;
   const unique = [...new Set(symbols)].filter(Boolean);
-  for (const symbol of unique) {
-    let done = false;
-    for (let attempt = 0; attempt < 3 && !done; attempt++) {
-      try {
-        await quoteIntraday(symbol);
-        ok++;
-        done = true;
-        onEach?.();
-      } catch (err) {
-        const msg = (err as Error).message;
-        if (msg.includes("429") && attempt < 2) {
-          await sleep(6000 * (attempt + 1));
+  for (let i = 0; i < unique.length; i++) {
+    const symbol = unique[i];
+    try {
+      await quoteIntraday(symbol);
+      ok++;
+      onEach?.();
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes("429")) {
+        try {
+          await quoteIntraday(symbol);
+          ok++;
+          onEach?.();
+          continue;
+        } catch (again) {
+          const againMsg = (again as Error).message;
+          console.error(`[quote] ${symbol} curva: ${againMsg}`);
+          errors.push(`${symbol} 5m: ${againMsg}`.slice(0, 100));
+          if (againMsg.includes("429") && noteYahooStrike()) {
+            stopped = true;
+            console.log(`[quote] Yahoo sigue en 429, curvas pendientes ${unique.length - i - 1}`);
+            break;
+          }
           continue;
         }
-        if (attempt === 2) {
-          console.error(`[quote] ${symbol} curva: ${msg}`);
-          errors.push(`${symbol} 5m: ${msg}`.slice(0, 100));
-        }
       }
+      console.error(`[quote] ${symbol} curva: ${msg}`);
+      errors.push(`${symbol} 5m: ${msg}`.slice(0, 100));
     }
-    await sleep(450);
   }
-  return { ok, errors: errors.slice(0, 10) };
+  return { ok, errors: errors.slice(0, 10), stopped };
 }
 
 function loadIntraday(symbol: string) {
@@ -452,57 +498,44 @@ export function refreshSymbolSoon(symbol: string, onDone?: () => void) {
 }
 
 async function fetchChart(symbol: string) {
-  let last: Error | null = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      await quoteChart(symbol);
-      return;
-    } catch (err) {
-      last = err as Error;
-      if (!last.message.includes("429") || attempt === 2) throw last;
-      await sleep(6000 * (attempt + 1));
-    }
+  try {
+    await quoteChart(symbol);
+  } catch (err) {
+    const last = err as Error;
+    if (!last.message.includes("429")) throw last;
+    await quoteChart(symbol);
   }
-  throw last ?? new Error("sin cotización");
 }
 
-export async function refreshQuotes(symbols: string[], onFilled?: () => void): Promise<{ ok: number; errors: string[] }> {
+export async function refreshQuotes(symbols: string[], onFilled?: () => void): Promise<{ ok: number; errors: string[]; stopped: boolean }> {
   const errors: string[] = [];
   let ok = 0;
+  let stopped = false;
   const unique = [...new Set(symbols)].filter(Boolean);
-  if (!unique.length) return { ok: 0, errors: ["sin símbolos"] };
+  if (!unique.length) return { ok: 0, errors: ["sin símbolos"], stopped: false };
   const missing = new Set(unique.filter((s) => !getQuote(s)));
   const ordered = [...missing, ...unique.filter((s) => !missing.has(s))];
-  const failed: string[] = [];
 
-  for (const symbol of ordered) {
+  for (let i = 0; i < ordered.length; i++) {
+    const symbol = ordered[i];
     try {
       await fetchChart(symbol);
       ok++;
       onFilled?.();
     } catch (err) {
       const msg = (err as Error).message;
-      failed.push(symbol);
       noteQuoteError(symbol, msg);
       console.error(`[quote] ${symbol} ${msg}`);
       errors.push(`${symbol}: ${msg}`.slice(0, 100));
-    }
-    await sleep(450);
-  }
-  if (failed.length) {
-    await sleep(8000);
-    for (const symbol of failed) {
-      try {
-        await quoteChart(symbol);
-        ok++;
-        onFilled?.();
-      } catch {
-        /* el error de la primera pasada ya quedó anotado */
+      if (msg.includes("429") && noteYahooStrike()) {
+        stopped = true;
+        const left = ordered.length - i - 1;
+        console.log(`[quote] Yahoo sigue en 429, paro esta vuelta. Quedan ${left}`);
+        break;
       }
-      await sleep(700);
     }
   }
-  return { ok, errors: errors.slice(0, 10) };
+  return { ok, errors: errors.slice(0, 10), stopped };
 }
 
 type YahooNum = number | { raw?: number } | null | undefined;
@@ -532,11 +565,10 @@ type SummaryJson = {
 };
 
 async function quoteSummary(symbol: string) {
-  const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=financialData,defaultKeyStatistics`;
-  const res = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(15000) });
-  if (res.status === 429) throw new Error("429");
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const j = (await res.json()) as SummaryJson;
+  const j = await yahooJson<SummaryJson>(
+    `/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=financialData,defaultKeyStatistics`,
+    15000,
+  );
   const block = j.quoteSummary?.result?.[0];
   if (!block) throw new Error(j.quoteSummary?.error?.description || "sin fundamentals");
   const fd = block.financialData ?? {};
@@ -554,29 +586,28 @@ async function quoteSummary(symbol: string) {
   );
 }
 
-export async function refreshFundamentals(symbols: string[]): Promise<{ ok: number; errors: string[] }> {
+export async function refreshFundamentals(symbols: string[]): Promise<{ ok: number; errors: string[]; stopped: boolean }> {
   const errors: string[] = [];
   let ok = 0;
+  let stopped = false;
+  if (yahooCooling()) return { ok: 0, errors: ["Yahoo en pausa"], stopped: true };
   const unique = [...new Set(symbols)].filter(Boolean);
-  for (const symbol of unique) {
-    let done = false;
-    for (let attempt = 0; attempt < 3 && !done; attempt++) {
-      try {
-        await quoteSummary(symbol);
-        ok++;
-        done = true;
-      } catch (err) {
-        const msg = (err as Error).message;
-        if (msg.includes("429") && attempt < 2) {
-          await sleep(1000 * (attempt + 1));
-          continue;
-        }
-        if (attempt === 2) errors.push(`${symbol}: ${msg}`.slice(0, 100));
+  for (let i = 0; i < unique.length; i++) {
+    const symbol = unique[i];
+    try {
+      await quoteSummary(symbol);
+      ok++;
+    } catch (err) {
+      const msg = (err as Error).message;
+      errors.push(`${symbol}: ${msg}`.slice(0, 100));
+      if (msg.includes("429") && noteYahooStrike()) {
+        stopped = true;
+        console.log(`[quote] fundamentals en pausa, quedan ${unique.length - i - 1}`);
+        break;
       }
     }
-    await sleep(120);
   }
-  return { ok, errors: errors.slice(0, 10) };
+  return { ok, errors: errors.slice(0, 10), stopped };
 }
 
 function avgFromBars(symbol: string) {

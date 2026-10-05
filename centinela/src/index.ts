@@ -12,6 +12,7 @@ const gaps = symbolsToRenew();
 console.log(
   `[quote] pendiente · sin precio ${gaps.missing.length} · desactualizados ${gaps.stale.length} · sin curva ${gaps.noCurve.length}`,
 );
+console.log("[quote] la primera petición espera 90s para que Yahoo suelte el límite");
 
 function refreshCartera() {
   try {
