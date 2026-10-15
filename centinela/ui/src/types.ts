@@ -56,6 +56,12 @@ export type AppSettings = {
     quietStart: string;
     quietEnd: string;
   };
+  avisos: {
+    cartera: boolean;
+    noticias: boolean;
+    ideas: boolean;
+    reddit: boolean;
+  };
   regimen: {
     watchSpy: number;
     watchQqq: number;
@@ -111,7 +117,7 @@ export type Idea = {
   updatedAt: string;
 };
 
-export type Category = "holding" | "priority" | "watchlist";
+export type Category = "holding" | "priority" | "watchlist" | "temporal";
 
 export type Position = {
   symbol: string;
@@ -224,6 +230,7 @@ export type AppState = {
     holding: Position[];
     priority: Position[];
     watch: Position[];
+    temporal: Position[];
   };
   factors: { id: string; label: string }[];
   ideas: Idea[];
@@ -235,7 +242,6 @@ export type AppState = {
   news: { title: string; url: string; tier: string; source: string }[];
   reddit: { wsb: SocialRun | null; subs: SocialRun | null };
   settings: AppSettings;
-  disclaimer: string;
 };
 
 export const regimeColor: Record<string, string> = {

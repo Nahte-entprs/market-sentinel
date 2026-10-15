@@ -6,6 +6,7 @@ const LABELS: Record<Category, string> = {
   holding: "Holding",
   priority: "Priority",
   watchlist: "Watchlist",
+  temporal: "Temporal",
 };
 
 const SECTION: Record<Category, { tone: string; wash: string; ink: string }> = {
@@ -23,6 +24,11 @@ const SECTION: Record<Category, { tone: string; wash: string; ink: string }> = {
     tone: "var(--sec-watch)",
     wash: "color-mix(in srgb, var(--sec-watch) 16%, transparent)",
     ink: "var(--sec-watch)",
+  },
+  temporal: {
+    tone: "var(--sec-temp)",
+    wash: "color-mix(in srgb, var(--sec-temp) 18%, transparent)",
+    ink: "var(--sec-temp)",
   },
 };
 
@@ -95,13 +101,14 @@ function maLabel(days: string, level: number | null, delta: number | null) {
 const FOLD_KEY = "centinela.cartera.folded";
 
 function readFolded(): Record<Category, boolean> {
-  const empty = { holding: false, priority: false, watchlist: false };
+  const empty = { holding: false, priority: false, watchlist: false, temporal: false };
   try {
     const parsed = JSON.parse(localStorage.getItem(FOLD_KEY) || "") as Partial<Record<Category, boolean>>;
     return {
       holding: !!parsed.holding,
       priority: !!parsed.priority,
       watchlist: !!parsed.watchlist,
+      temporal: !!parsed.temporal,
     };
   } catch {
     return empty;
@@ -217,6 +224,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
   function list(cat: Category): Position[] {
     if (cat === "holding") return state.cartera.holding;
     if (cat === "priority") return state.cartera.priority;
+    if (cat === "temporal") return state.cartera.temporal ?? [];
     return state.cartera.watch;
   }
 
@@ -242,7 +250,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
         />
       </div>
 
-      {(["holding", "priority", "watchlist"] as Category[]).map((cat) => {
+      {(["holding", "priority", "watchlist", "temporal"] as Category[]).map((cat) => {
         const sec = SECTION[cat];
         const rows = list(cat);
         const closed = folded[cat];
@@ -265,7 +273,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                   {LABELS[cat]}
                 </span>
                 <span className="block text-[11px] text-ha-muted">
-                  {cat === "holding" ? "Por valor de mercado" : "Orden manual"}
+                  {cat === "holding" ? "Por valor de mercado" : cat === "temporal" ? "Pico de Reddit · sale al enfriarse" : "Orden manual"}
                   {rows.length ? ` · ${rows.length}` : ""}
                 </span>
               </span>
@@ -285,13 +293,15 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
             </button>
           </div>
           {closed ? null : rows.length === 0 ? (
-            <p className="px-3 py-4 text-sm text-ha-muted">Vacío.</p>
+            <p className="px-3 py-4 text-sm text-ha-muted">
+              {cat === "temporal" ? "Vacío. Entra sola cuando un ticker está en pico en Reddit." : "Vacío."}
+            </p>
           ) : (
           <ul className="space-y-2 px-2 py-2">
             {rows.map((p) => {
               const up = (p.change_pct ?? 0) >= 0;
               const expanded = open === p.symbol;
-              const band = state.settings.cartera[cat];
+              const band = cat === "temporal" ? state.settings.cartera.watchlist : state.settings.cartera[cat];
               const fairUp = (p.fair_delta_pct ?? 0) > 0;
               const fairDown = (p.fair_delta_pct ?? 0) < 0;
               const paceHot = p.pace_ratio != null && p.pace_samples >= 5 && p.pace_ratio >= band.sessionPaceRatio;
@@ -366,7 +376,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                       </div>
                       <VolumeCurve avg={p.volume_avg ?? []} today={p.volume_today ?? []} />
                     </button>
-                    {cat !== "holding" && (
+                    {cat !== "holding" && cat !== "temporal" && (
                       <div className="flex flex-col border-l border-ha-border">
                         <button
                           type="button"
@@ -437,6 +447,9 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
         <div className="fixed inset-0 z-20 bg-black/60 flex items-end justify-center p-4" onClick={() => setConfirm(null)}>
           <div className="w-full max-w-md rounded-2xl bg-ha-card border border-ha-border p-4 mb-4" onClick={(e) => e.stopPropagation()}>
             <p className="font-medium">¿Quitar {confirm}?</p>
+            {list("temporal").some((p) => p.symbol === confirm) && (
+              <p className="mt-1 text-sm text-ha-muted">No vuelve a entrar sola hasta mañana.</p>
+            )}
             <div className="mt-4 flex gap-2">
               <button type="button" onClick={() => setConfirm(null)} className="flex-1 rounded-lg bg-ha-text/10 py-2.5 text-sm">
                 Cancelar

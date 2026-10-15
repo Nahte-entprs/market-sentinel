@@ -1,5 +1,6 @@
 import mqtt from "mqtt";
 import { config } from "./config.ts";
+import { appSettings } from "./settings.ts";
 import type { AlertRecord, CarteraPosition, CentinelaNotify, IdeaRecord, JobInfo, NotifySection, Regime, TickerAlert } from "./types.ts";
 import type { SocialRun } from "./reddit-social.ts";
 
@@ -28,6 +29,10 @@ const device: HaDevice = {
 };
 
 let client: mqtt.MqttClient | null = null;
+const pendingNotify: CentinelaNotify[] = [];
+let mqttDropLogAt = 0;
+let mqttDown = false;
+let mqttReconnectLogged = false;
 const PREFIX = "centinela";
 const DISCOVERY = "homeassistant";
 
@@ -62,10 +67,14 @@ export async function startMqtt(handlers: {
     will: { topic: `${PREFIX}/status`, payload: "offline", retain: true, qos: 0 },
   });
   client.on("connect", () => {
-    console.log("[mqtt] conectado");
+    const back = mqttDown;
+    mqttDown = false;
+    mqttReconnectLogged = false;
+    console.log(back ? "[mqtt] reconectado" : "[mqtt] conectado");
     publishDiscovery();
     client?.publish(`${PREFIX}/status`, "online", { retain: true });
     client?.subscribe(`${PREFIX}/cmd/#`);
+    flushNotify();
     handlers.onReady?.();
   });
   client.on("message", (topic, payload) => {
@@ -93,6 +102,16 @@ export async function startMqtt(handlers: {
     }
   });
   client.on("error", (err) => console.error("[mqtt]", err.message));
+  client.on("offline", () => {
+    if (mqttDown) return;
+    mqttDown = true;
+    console.error("[mqtt] offline — precios y avisos no llegan a HA hasta reconectar");
+  });
+  client.on("reconnect", () => {
+    if (mqttReconnectLogged) return;
+    mqttReconnectLogged = true;
+    console.log("[mqtt] reintentando conexión");
+  });
 }
 
 function forget(component: string, id: string) {
@@ -156,6 +175,12 @@ function publishDiscovery() {
     json_attributes_topic: `${PREFIX}/sensor/watch_attr`,
     icon: "mdi:eye-outline",
   });
+  disc("sensor", "temporal", {
+    name: "Temporal",
+    state_topic: `${PREFIX}/sensor/temporal`,
+    json_attributes_topic: `${PREFIX}/sensor/temporal_attr`,
+    icon: "mdi:fire",
+  });
   disc("sensor", "ideas", {
     name: "Ideas de mercado",
     state_topic: `${PREFIX}/sensor/ideas`,
@@ -197,7 +222,7 @@ function publishDiscovery() {
     name: "Lista ticker",
     command_topic: `${PREFIX}/cmd/ticker_category`,
     state_topic: `${PREFIX}/select/ticker_categoria`,
-    options: ["holding", "priority", "watchlist"],
+    options: ["holding", "priority", "watchlist", "temporal"],
     icon: "mdi:format-list-group",
   });
   disc("number", "acciones", {
@@ -309,19 +334,60 @@ function publishDiscovery() {
 }
 
 function pub(topic: string, payload: string | Record<string, unknown>, retain = true) {
-  if (!client?.connected) return;
+  if (!client?.connected) {
+    const now = Date.now();
+    if (now - mqttDropLogAt > 60_000) {
+      mqttDropLogAt = now;
+      console.error(`[mqtt] sin conexión, no publico ${topic} (el resto se silencia 60s)`);
+    }
+    return false;
+  }
   const body = typeof payload === "string" ? payload : JSON.stringify(payload);
-  client.publish(topic, body, { retain });
+  client.publish(topic, body, { retain }, (err) => {
+    if (err) console.error(`[mqtt] ${topic}: ${err.message}`);
+  });
+  return true;
 }
 
 export function notifyUrl(section: NotifySection) {
   return `/2e00f8dc_centinela?tab=${section}`;
 }
 
+function pushesEnabled(section: NotifySection): boolean {
+  const v = appSettings().avisos;
+  if (section === "cartera") return v.cartera;
+  if (section === "ideas") return v.ideas;
+  if (section === "reddit") return v.reddit;
+  return v.noticias;
+}
+
 export function publishNotify(n: CentinelaNotify) {
+  if (!n.force && !pushesEnabled(n.section)) {
+    console.log(`[mqtt] aviso en silencio (${n.section}): ${n.title}`);
+    return;
+  }
+  if (!client?.connected) {
+    pendingNotify.push(n);
+    if (pendingNotify.length > 20) pendingNotify.shift();
+    console.error(`[mqtt] aviso en espera: ${n.title}`);
+    return;
+  }
+  deliverNotify(n);
+}
+
+function deliverNotify(n: CentinelaNotify) {
+  if (!n.force && !pushesEnabled(n.section)) return;
   pub(`${PREFIX}/notify`, n, false);
   pub(`${PREFIX}/sensor/last_notify`, n.title.slice(0, 255));
   pub(`${PREFIX}/sensor/last_notify_attr`, n);
+}
+
+function flushNotify() {
+  const queued = pendingNotify.splice(0);
+  for (const n of queued) {
+    console.log(`[mqtt] envío aviso atrasado: ${n.title}`);
+    deliverNotify(n);
+  }
 }
 
 function sectionOfAlert(alert: AlertRecord): NotifySection {
@@ -338,10 +404,14 @@ export function publishAlert(alert: AlertRecord) {
     friendly_why: alert.why.map((w) => w.text),
   });
   const section = sectionOfAlert(alert);
+  const facts = alert.why.map((w) => w.text.trim()).filter(Boolean);
+  const title = (facts[0] || alert.title).replace(/\s+/g, " ").slice(0, 90);
+  const more = facts.slice(1).join(" · ");
+  const message = (more || (title === alert.title ? alert.symbols.join(", ") : alert.title)).slice(0, 280);
   publishNotify({
     section,
-    title: alert.title,
-    message: alert.summary.slice(0, 280),
+    title,
+    message: message || title,
     url: notifyUrl(section),
     at: alert.createdAt,
   });
@@ -356,10 +426,13 @@ export function publishDigest(text: string) {
   pub(`${PREFIX}/digest`, { text, at }, false);
   pub(`${PREFIX}/sensor/digest`, text.slice(0, 255));
   pub(`${PREFIX}/sensor/digest_attr`, { text });
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lead = lines.find((l) => l.startsWith("SPY ") || l.startsWith("SMH ")) ?? lines[0] ?? "Briefing";
+  const rest = lines.filter((l) => l !== lead);
   publishNotify({
     section: "radar",
-    title: "Centinela briefing",
-    message: text.slice(0, 220),
+    title: lead.slice(0, 90),
+    message: (rest.join(" · ") || lead).slice(0, 240),
     url: notifyUrl("radar"),
     at,
   });
@@ -380,6 +453,7 @@ export function publishCartera(lists: {
   holding: CarteraPosition[];
   priority: CarteraPosition[];
   watch: CarteraPosition[];
+  temporal: CarteraPosition[];
 }) {
   pub(`${PREFIX}/sensor/holding`, String(lists.holding.length));
   pub(`${PREFIX}/sensor/holding_attr`, { positions: lists.holding });
@@ -387,17 +461,12 @@ export function publishCartera(lists: {
   pub(`${PREFIX}/sensor/priority_attr`, { positions: lists.priority });
   pub(`${PREFIX}/sensor/watch`, String(lists.watch.length));
   pub(`${PREFIX}/sensor/watch_attr`, { positions: lists.watch });
+  pub(`${PREFIX}/sensor/temporal`, String(lists.temporal.length));
+  pub(`${PREFIX}/sensor/temporal_attr`, { positions: lists.temporal });
 }
 
 export function publishTickerAlert(alert: TickerAlert) {
   pub(`${PREFIX}/ticker_alert`, alert, false);
-  publishNotify({
-    section: "cartera",
-    title: alert.title,
-    message: alert.message,
-    url: notifyUrl("cartera"),
-    at: alert.at,
-  });
 }
 
 export function publishIdeas(ideas: IdeaRecord[]) {

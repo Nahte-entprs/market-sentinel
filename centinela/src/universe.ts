@@ -1,4 +1,5 @@
 import { db, json, nowIso, getMeta, setMeta, readJsonFile } from "./db.ts";
+import { config } from "./config.ts";
 import type { TickerCategory } from "./types.ts";
 
 export type TickerRow = {
@@ -14,7 +15,7 @@ export type TickerRow = {
   sort_order: number;
 };
 
-const CATEGORIES = new Set<TickerCategory>(["holding", "priority", "watchlist"]);
+const CATEGORIES = new Set<TickerCategory>(["holding", "priority", "watchlist", "temporal"]);
 
 function mapTicker(r: Record<string, unknown>): TickerRow {
   const cat = String(r.category ?? "watchlist");
@@ -195,15 +196,38 @@ export function upsertTicker(opts: {
   return s;
 }
 
+function localDay(now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: config.tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+function banKey(symbol: string) {
+  return `temporal_ban_${symbol}`;
+}
+
 export function removeTicker(symbol: string) {
-  db.prepare("UPDATE tickers SET enabled = 0 WHERE symbol = ?").run(symbol.trim().toUpperCase());
+  const s = symbol.trim().toUpperCase();
+  const current = getTicker(s);
+  if (current?.enabled === 1 && current.category === "temporal") setMeta(banKey(s), localDay());
+  db.prepare("UPDATE tickers SET enabled = 0 WHERE symbol = ?").run(s);
+}
+
+/** Sale de Temporal sin el veto de un día. Lo usa el enfriado automático. */
+export function retireTemporal(symbol: string) {
+  const s = symbol.trim().toUpperCase();
+  db.prepare("UPDATE tickers SET enabled = 0 WHERE symbol = ? AND category = 'temporal'").run(s);
+  db.prepare("DELETE FROM meta WHERE key = ?").run(`temporal_quiet_${s}`);
 }
 
 export function moveTicker(symbol: string, dir: "up" | "down") {
   const s = normalizeSymbol(symbol);
   const current = getTicker(s);
   if (!current || current.enabled !== 1) throw new Error("Ticker no está en cartera");
-  if (current.category === "holding") return s;
+  if (current.category === "holding" || current.category === "temporal") return s;
   const list = listTickersByCategory(current.category);
   const idx = list.findIndex((t) => t.symbol === s);
   if (idx < 0) return s;

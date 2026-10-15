@@ -131,7 +131,6 @@ export function App() {
         {tab === "reddit" && <Reddit state={state} onReload={load} />}
         {tab === "ideas" && <Ideas state={state} onReload={load} />}
         {tab === "config" && <Config state={state} onReload={load} />}
-        <p className="text-[11px] text-ha-muted mt-6 pb-2">{state.disclaimer}</p>
       </main>
     </div>
   );

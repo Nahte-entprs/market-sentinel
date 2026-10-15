@@ -1,5 +1,6 @@
 import { getSetting, parseJson, setSetting } from "./db.ts";
 import { config } from "./config.ts";
+import type { TickerCategory } from "./types.ts";
 
 export type WatchBand = {
   changePct: number;
@@ -56,6 +57,12 @@ export type AppSettings = {
     crisisBypassScore: number;
     quietStart: string;
     quietEnd: string;
+  };
+  avisos: {
+    cartera: boolean;
+    noticias: boolean;
+    ideas: boolean;
+    reddit: boolean;
   };
   regimen: {
     watchSpy: number;
@@ -121,6 +128,12 @@ const DEFAULTS: AppSettings = {
     quietStart: "23:00",
     quietEnd: "07:00",
   },
+  avisos: {
+    cartera: true,
+    noticias: true,
+    ideas: true,
+    reddit: true,
+  },
   regimen: {
     watchSpy: -1,
     watchQqq: -1.5,
@@ -144,6 +157,10 @@ function num(v: unknown, fallback: number, min: number, max: number): number {
   const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+function flag(v: unknown, fallback: boolean): boolean {
+  return typeof v === "boolean" ? v : fallback;
 }
 
 function clock(v: unknown, fallback: string): string {
@@ -174,6 +191,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
   const c = o.cartera && typeof o.cartera === "object" ? (o.cartera as Record<string, unknown>) : {};
   const a = o.alertas && typeof o.alertas === "object" ? (o.alertas as Record<string, unknown>) : {};
   const g = o.regimen && typeof o.regimen === "object" ? (o.regimen as Record<string, unknown>) : {};
+  const v = o.avisos && typeof o.avisos === "object" ? (o.avisos as Record<string, unknown>) : {};
   const d = DEFAULTS;
   const block = typeof r.blockText === "string" ? r.blockText.slice(0, 8000) : d.reddit.blockText;
   return {
@@ -223,6 +241,12 @@ export function normalizeSettings(raw: unknown): AppSettings {
       quietStart: clock(a.quietStart, config.quietStart || d.alertas.quietStart),
       quietEnd: clock(a.quietEnd, config.quietEnd || d.alertas.quietEnd),
     },
+    avisos: {
+      cartera: flag(v.cartera, d.avisos.cartera),
+      noticias: flag(v.noticias, d.avisos.noticias),
+      ideas: flag(v.ideas, d.avisos.ideas),
+      reddit: flag(v.reddit, d.avisos.reddit),
+    },
     regimen: {
       watchSpy: num(g.watchSpy, d.regimen.watchSpy, -30, 5),
       watchQqq: num(g.watchQqq, d.regimen.watchQqq, -30, 5),
@@ -239,6 +263,13 @@ export function normalizeSettings(raw: unknown): AppSettings {
       crisisVixChange: num(g.crisisVixChange, d.regimen.crisisVixChange, 1, 80),
     },
   };
+}
+
+/** Temporal avisa con los cortes de watchlist, para no sumar otra fuente de spam. */
+export function watchBand(category: TickerCategory): WatchBand {
+  const c = appSettings().cartera;
+  if (category === "temporal") return c.watchlist;
+  return c[category];
 }
 
 export function appSettings(): AppSettings {
@@ -269,6 +300,7 @@ export function saveAppSettings(patch: unknown): AppSettings {
       watchlist: { ...cur.cartera.watchlist, ...asRecord(cartera.watchlist) },
     },
     alertas: { ...cur.alertas, ...asRecord(p.alertas) },
+    avisos: { ...cur.avisos, ...asRecord(p.avisos) },
     regimen: { ...cur.regimen, ...asRecord(p.regimen) },
   });
   setSetting(KEY, JSON.stringify(next));

@@ -2,7 +2,7 @@ import { listTickers, listTickersByCategory } from "./universe.ts";
 import { getQuote, quoteError, readVolumeCurve, readVolumeSignal } from "./quotes.ts";
 import { publishCartera, publishWatchlist } from "./mqtt.ts";
 import { MIN_SLOT_SAMPLES } from "./volume.ts";
-import { appSettings } from "./settings.ts";
+import { watchBand } from "./settings.ts";
 import type { CarteraPosition, TickerCategory } from "./types.ts";
 import type { TickerRow } from "./universe.ts";
 
@@ -87,7 +87,7 @@ export function toPosition(t: TickerRow): CarteraPosition {
   const ptBit = q?.targetMean ? ` · PT ${usd(q.targetMean)}` : "";
   const paceWord = flow.sessionDone ? "día" : "ritmo";
   const paceHint = flow.sessionDone ? " lo habitual" : " a esta hora";
-  const fadeCut = appSettings().cartera[t.category].sessionFadeRatio;
+  const fadeCut = watchBand(t.category).sessionFadeRatio;
   const paceLow =
     flow.paceRatio != null && flow.paceSamples >= MIN_SLOT_SAMPLES && flow.paceRatio <= fadeCut;
   const paceShown = ratioBit(flow.paceRatio, flow.paceSamples);
@@ -156,11 +156,22 @@ export function listPositions(category: TickerCategory): CarteraPosition[] {
   return rows.sort((a, b) => (b.market_value ?? -1) - (a.market_value ?? -1) || a.symbol.localeCompare(b.symbol));
 }
 
+let carteraTimer: ReturnType<typeof setTimeout> | null = null;
+
 export function publishCarteraState() {
-  publishWatchlist(listTickers("ticker").map((t) => t.symbol));
-  publishCartera({
-    holding: listPositions("holding"),
-    priority: listPositions("priority"),
-    watch: listPositions("watchlist"),
-  });
+  if (carteraTimer) clearTimeout(carteraTimer);
+  carteraTimer = setTimeout(() => {
+    carteraTimer = null;
+    try {
+      publishWatchlist(listTickers("ticker").map((t) => t.symbol));
+      publishCartera({
+        holding: listPositions("holding"),
+        priority: listPositions("priority"),
+        watch: listPositions("watchlist"),
+        temporal: listPositions("temporal"),
+      });
+    } catch (err) {
+      console.error(`[cartera] ${(err as Error).message}`);
+    }
+  }, 1500);
 }

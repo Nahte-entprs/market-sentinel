@@ -1,3 +1,5 @@
+import { discardBody } from "./http.ts";
+
 const HEADERS = {
   "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
   Accept: "application/json",
@@ -63,6 +65,7 @@ export async function fetchCnbcQuotes(symbols: string[]): Promise<{ quotes: Cnbc
     try {
       const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(20000) });
       if (!res.ok) {
+        await discardBody(res);
         error = `HTTP ${res.status}`;
         continue;
       }
@@ -106,7 +109,10 @@ type PriceBar = { close?: string; volume?: number; tradeTime?: string; tradeTime
 async function fetchBars(symbol: string, range: "1M" | "5D"): Promise<PriceBar[]> {
   const url = `https://ts-api.cnbc.com/harmony/app/charts/${range}.json?symbol=${encodeURIComponent(cnbcSymbol(symbol))}`;
   const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(20000) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    await discardBody(res);
+    throw new Error(`HTTP ${res.status}`);
+  }
   const j = (await res.json()) as { barData?: { priceBars?: PriceBar[] }; statusMessage?: string };
   const bars = j.barData?.priceBars;
   if (!bars?.length) throw new Error(j.statusMessage || "sin velas");

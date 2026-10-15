@@ -16,7 +16,7 @@ views:
 
           - type: custom:mushroom-template-card
             primary: "Régimen {{ states('sensor.centinela_regime') }}"
-            secondary: "Umbral dinámico · no es consejo financiero"
+            secondary: "Umbral dinámico"
             icon: mdi:radar
             icon_color: >
               {% set r = states('sensor.centinela_regime') %}
@@ -120,7 +120,7 @@ views:
         cards:
           - type: markdown
             content: >
-              No es consejo financiero. Fair lo cargas tú; rating y PT vienen de Yahoo.
+              Fair lo cargas tú; rating y PT vienen de Yahoo.
               Fair en positivo: el precio está por encima de tu valor justo.
               Ritmo y 5m: volumen de hoy contra la misma hora de los últimos 14 días de mercado. «bajo» es impulso más débil.
 

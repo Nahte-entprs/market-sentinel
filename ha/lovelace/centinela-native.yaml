@@ -6,7 +6,7 @@ views:
     cards:
       - type: markdown
         content: >
-          Radar local. No es consejo financiero. IDs de entidad según MQTT de este HA.
+          Radar local. IDs de entidad según MQTT de este HA.
 
       - type: entity
         entity: sensor.centinela_regimen

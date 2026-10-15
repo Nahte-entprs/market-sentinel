@@ -1,18 +1,20 @@
 import { db, json, nowIso, parseJson, getSetting, getMeta, setMeta } from "./db.ts";
 import { isRth } from "./config.ts";
 import { listFactors, listIdeas, listTickers } from "./universe.ts";
-import { allQuoteSymbols, allQuotes, getQuote, needsDailyBars, readVolumeSignal, refreshFromCnbc, refreshCnbcCurve, refreshCnbcDaily, refreshFundamentals, symbolsToRenew, threeDayTrend } from "./quotes.ts";
-import { emitIfNeeded, lastAlert, lastDigest, listAlerts, maybePushCrisis, maybePushReddit, maybePushTickerWatch, saveDigest } from "./alerts.ts";
+import { syncTemporalCartera } from "./temporal.ts";
+import { allQuoteSymbols, allQuotes, getQuote, needsDailyBars, readVolumeSignal, refreshFromCnbc, refreshCnbcCurve, refreshCnbcDaily, refreshFundamentals, refreshSymbolSoon, symbolsToRenew, threeDayTrend } from "./quotes.ts";
+import { claimTickerWatch, emitIfNeeded, lastAlert, lastDigest, listAlerts, maybePushCrisis, maybePushReddit, pushCarteraBatch, saveDigest } from "./alerts.ts";
 import { ingestFeeds, recentNews } from "./news.ts";
 import { extractEntities, lexiconPolarity, matchThesis } from "./entities.ts";
 import { tickersFromEntities } from "./graph.ts";
 import { computeRegime, confidenceFrom, currentRegime, scoreThreshold } from "./regime.ts";
 import { collectOtherSubs, collectWsbDaily, ensureRedditTables, liveTickers } from "./reddit-social.ts";
-import { publishIdeas, publishJob, publishRegime, publishSocial, publishStatus } from "./mqtt.ts";
+import { mqttConnected, publishIdeas, publishJob, publishRegime, publishSocial, publishStatus } from "./mqtt.ts";
+import { armJob, clearPhase, disarmJob, loopLag, onPulse, phaseOf, runInLane, setPhase, stillRunning, type Lane } from "./pulse.ts";
 import { listPositions, publishCarteraState } from "./portfolio.ts";
 import { loadSocialRun, saveSocialRun } from "./social-store.ts";
-import { appSettings } from "./settings.ts";
-import type { Candidate, IdeaRecord, JobInfo, JobStatus, WhyItem } from "./types.ts";
+import { appSettings, watchBand } from "./settings.ts";
+import type { Candidate, IdeaRecord, JobInfo, JobStatus, TickerAlert, WhyItem } from "./types.ts";
 
 type JobDef = {
   id: string;
@@ -22,10 +24,6 @@ type JobDef = {
   cadenceMs: () => number;
   run: () => Promise<string>;
 };
-
-const queue: string[] = [];
-let running: string | null = null;
-let drainPromise: Promise<void> | null = null;
 
 function setJob(id: string, status: JobStatus, error: string | null, note: string | null) {
   db.prepare(
@@ -52,61 +50,62 @@ function jobInfo(def: JobDef): JobInfo {
   };
 }
 
-let quotesBusy = false;
-
 async function quotesJob() {
-  if (quotesBusy) return "cotizaciones ya en curso";
-  quotesBusy = true;
-  try {
-    const symbols = allQuoteSymbols();
-    const before = symbolsToRenew();
-    const show = (items: string[]) => (items.length ? items.join(", ") : "—");
-    console.log(`[quote] CNBC · sin precio: ${show(before.missing)} · desactualizados: ${show(before.stale)} · sin curva: ${show(before.noCurve)}`);
-    const r = await refreshFromCnbc(symbols, () => publishCarteraState());
-    publishCarteraState();
-    if (r.ok === 0) throw new Error(r.error || r.missing[0] || "CNBC sin precios");
-    const needDaily = symbols.filter((s) => !r.missing.includes(s) && needsDailyBars(s));
-    let dailyOk = 0;
-    const dailyErr: string[] = [];
-    for (const symbol of needDaily) {
-      try {
-        await refreshCnbcDaily(symbol);
-        dailyOk++;
-        await new Promise((r) => setTimeout(r, 120));
-      } catch (err) {
-        const msg = (err as Error).message;
-        dailyErr.push(`${symbol}: ${msg}`);
-        console.error(`[quote] ${symbol} diario: ${msg}`);
-      }
+  setPhase("cotizaciones");
+  const symbols = allQuoteSymbols();
+  const before = symbolsToRenew();
+  const show = (items: string[]) => (items.length ? items.join(", ") : "—");
+  console.log(`[quote] CNBC · sin precio: ${show(before.missing)} · desactualizados: ${show(before.stale)} · sin curva: ${show(before.noCurve)}`);
+  setPhase(`CNBC ${symbols.length} símbolos`);
+  const r = await refreshFromCnbc(symbols, () => publishCarteraState());
+  publishCarteraState();
+  if (!stillRunning()) return "cortado por timeout";
+  if (r.ok === 0) throw new Error(r.error || r.missing[0] || "CNBC sin precios");
+  const needDaily = symbols.filter((s) => !r.missing.includes(s) && needsDailyBars(s));
+  let dailyOk = 0;
+  const dailyErr: string[] = [];
+  for (const symbol of needDaily) {
+    if (!stillRunning()) return "cortado por timeout";
+    setPhase(`diaria ${symbol}`);
+    try {
+      await refreshCnbcDaily(symbol);
+      dailyOk++;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    } catch (err) {
+      const msg = (err as Error).message;
+      dailyErr.push(`${symbol}: ${msg}`);
+      console.error(`[quote] ${symbol} diario: ${msg}`);
     }
-    const curves = symbolsToRenew().noCurve.filter((s) => !r.missing.includes(s));
-    let curveOk = 0;
-    const curveErr: string[] = [];
-    for (const symbol of curves) {
-      try {
-        await refreshCnbcCurve(symbol);
-        curveOk++;
-        publishCarteraState();
-        await new Promise((r) => setTimeout(r, 120));
-      } catch (err) {
-        const msg = (err as Error).message;
-        curveErr.push(`${symbol}: ${msg}`);
-        console.error(`[quote] ${symbol} curva: ${msg}`);
-      }
-    }
-    publishCarteraState();
-    const bits = [`${r.ok} precios CNBC`, `${dailyOk} diarias`, curves.length ? `${curveOk} curvas` : "curvas al día"];
-    const failed = r.missing.length + dailyErr.length + curveErr.length;
-    if (failed) bits.push(`${failed} errores`);
-    console.log(`[quote] listo · ${bits.join(" · ")}`);
-    return bits.join(" · ");
-  } finally {
-    quotesBusy = false;
   }
+  const curves = symbolsToRenew().noCurve.filter((s) => !r.missing.includes(s));
+  let curveOk = 0;
+  const curveErr: string[] = [];
+  for (const symbol of curves) {
+    if (!stillRunning()) return "cortado por timeout";
+    setPhase(`curva ${symbol}`);
+    try {
+      await refreshCnbcCurve(symbol);
+      curveOk++;
+      publishCarteraState();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    } catch (err) {
+      const msg = (err as Error).message;
+      curveErr.push(`${symbol}: ${msg}`);
+      console.error(`[quote] ${symbol} curva: ${msg}`);
+    }
+  }
+  publishCarteraState();
+  const bits = [`${r.ok} precios CNBC`, `${dailyOk} diarias`, curves.length ? `${curveOk} curvas` : "curvas al día"];
+  const failed = r.missing.length + dailyErr.length + curveErr.length;
+  if (failed) bits.push(`${failed} errores`);
+  console.log(`[quote] listo · ${bits.join(" · ")}`);
+  return bits.join(" · ");
 }
 
 async function fundamentalsJob() {
+  setPhase("fundamentales");
   const r = await refreshFundamentals(listTickers("ticker").map((t) => t.symbol));
+  if (!stillRunning()) return "cortado por timeout";
   publishCarteraState();
   if (r.stopped && r.ok === 0) return "Yahoo en pausa";
   if (r.errors.length && r.ok === 0) throw new Error(r.errors[0]);
@@ -164,11 +163,49 @@ function whyPriceVol(symbol: string): WhyItem[] {
   return items;
 }
 
+function money(n: number) {
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Lo que cabe en el título plegado del teléfono. El detalle queda en el cuerpo. */
+function leadTag(reason: string): string {
+  const mult = reason.match(/([\d.]+)×/);
+  const pct = reason.match(/([+-][\d.]+%)/);
+  if (/^vela 5m/.test(reason) && mult) return `5m ${mult[1]}×`;
+  if (/^ritmo/.test(reason) && mult) return `ritmo ${mult[1]}×`;
+  if (/^volumen/.test(reason) && mult) return `vol ${mult[1]}×`;
+  if (/3d/.test(reason) && pct) return `3d ${pct[1]}`;
+  if (pct && reason.includes("en el día")) return pct[1];
+  return reason.slice(0, 42);
+}
+
+function carteraNotice(symbol: string, price: number, reasons: string[]) {
+  const day = reasons.find((r) => r.includes("en el día"));
+  const lead = day ?? reasons[0] ?? symbol;
+  const title = `${symbol} ${leadTag(lead)}`.slice(0, 80);
+  const rest = day ? reasons.filter((r) => r !== day) : reasons;
+  const px = price > 0 ? `a ${money(price)}` : "";
+  const message = [px, ...rest].filter(Boolean).join(" · ");
+  return { title, message: message || lead };
+}
+
 async function volumeJob() {
+  setPhase("volumen");
   const names = listTickers("ticker");
   const fired: string[] = [];
-  const pushed: string[] = [];
+  const batch: TickerAlert[] = [];
+  const finish = (cut: boolean) => {
+    pushCarteraBatch(batch);
+    const bits = [];
+    if (fired.length) bits.push(`radar: ${fired.join(", ")}`);
+    if (batch.length) bits.push(`cartera: ${batch.map((a) => a.symbol).join(", ")}`);
+    const body = bits.length ? bits.join(" · ") : "sin umbrales de volumen";
+    return cut ? `cortado por timeout · ${body}` : body;
+  };
   for (const t of names) {
+    if (!stillRunning()) return finish(true);
+    setPhase(`volumen ${t.symbol}`);
+    await Promise.resolve();
     const q = getQuote(t.symbol);
     if (!q) continue;
     const why = whyPriceVol(t.symbol);
@@ -203,8 +240,7 @@ async function volumeJob() {
       if (alert) fired.push(t.symbol);
     }
 
-    const bands = appSettings().cartera;
-    const thresh = bands[t.category] ?? bands.watchlist;
+    const thresh = watchBand(t.category);
     const flow = readVolumeSignal(t.symbol);
     const reasons: string[] = [];
     if (q.changeTrusted && Math.abs(q.changePct) >= thresh.changePct) {
@@ -256,26 +292,23 @@ async function volumeJob() {
       reasons.push(`${label} 3d ${trend.pct >= 0 ? "+" : ""}${trend.pct.toFixed(1)}%`);
     }
     if (!reasons.length) continue;
-    const ok = maybePushTickerWatch({
+    const notice = carteraNotice(t.symbol, q.price, reasons);
+    const alert: TickerAlert = {
       symbol: t.symbol,
       category: t.category,
-      title: `${t.symbol} · ${t.category}`,
-      message: reasons.join(" · "),
+      title: notice.title,
+      message: notice.message,
       changePct: q.changePct,
       volumeRatio: Math.max(q.volumeRatio, flow.burstRatio ?? 0, flow.paceRatio ?? 0),
       reasons,
       at: nowIso(),
-    });
-    if (ok) {
-      pushed.push(t.symbol);
-      if (paceFresh && paceKey && flow.paceRatio != null) setMeta(paceKey, String(flow.paceRatio));
-      if (fadeFresh && fadeKey && flow.paceRatio != null) setMeta(fadeKey, String(flow.paceRatio));
-    }
+    };
+    if (!claimTickerWatch(alert)) continue;
+    batch.push(alert);
+    if (paceFresh && paceKey && flow.paceRatio != null) setMeta(paceKey, String(flow.paceRatio));
+    if (fadeFresh && fadeKey && flow.paceRatio != null) setMeta(fadeKey, String(flow.paceRatio));
   }
-  const bits = [];
-  if (fired.length) bits.push(`radar: ${fired.join(", ")}`);
-  if (pushed.length) bits.push(`cartera: ${pushed.join(", ")}`);
-  return bits.length ? bits.join(" · ") : "sin umbrales de volumen";
+  return finish(false);
 }
 
 function recentWsbBoost(symbol: string): { text: string; ratio: number } | null {
@@ -293,6 +326,7 @@ function recentWsbBoost(symbol: string): { text: string; ratio: number } | null 
 
 async function macroJob() {
   const news = await ingestFeeds("macro.scan");
+  if (!stillRunning()) return `cortado por timeout · feeds +${news.inserted}`;
   const why: WhyItem[] = [];
   const oil = getQuote("CL=F");
   const yen = getQuote("USDJPY=X");
@@ -352,6 +386,7 @@ async function macroJob() {
 
 async function tickerEventsJob() {
   const news = await ingestFeeds("ticker.events");
+  if (!stillRunning()) return `cortado por timeout · +${news.inserted} noticias`;
   const items = recentNews(8, 60);
   const grouped = new Map<string, typeof items>();
   for (const n of items) {
@@ -484,7 +519,8 @@ async function maybeDivergence() {
 }
 
 async function sentimentJob() {
-  await ingestFeeds("market.sentiment");
+  const news = await ingestFeeds("market.sentiment");
+  if (!stillRunning()) return `cortado por timeout · feeds +${news.inserted}`;
   const items = recentNews(12, 50);
   let bull = 0;
   let bear = 0;
@@ -515,30 +551,43 @@ async function sentimentJob() {
   return note;
 }
 
+function redditNote(
+  run: { comments: number; windowComments: number; tickers24h: { ticker: string }[]; emerging: { ticker: string }[]; errors: string[] },
+  pushed: boolean,
+) {
+  const top = (run.tickers24h[0]?.ticker ?? run.emerging[0]?.ticker) || "none";
+  const err = run.errors.length ? ` · ${run.errors[0].slice(0, 140)}` : "";
+  return `nuevos ${run.comments} · 24h ${run.windowComments} cmt · ${run.tickers24h.length} tkr · ${top}${pushed ? " · aviso" : ""}${err}`;
+}
+
 async function redditJob() {
+  setPhase("reddit wsb");
   ensureRedditTables();
   const run = await collectWsbDaily();
+  if (!stillRunning()) return `cortado por timeout · ${redditNote(run, false)}`;
   saveSocialRun(run);
   publishSocial(run);
+  absorbTemporal();
   const pushed = maybePushReddit(run);
-  const top = (run.tickers24h[0]?.ticker ?? run.emerging[0]?.ticker) || "none";
-  const err = run.errors.length ? `; ${run.errors[0].slice(0, 80)}` : "";
-  const note = `24h ${run.windowComments} cmt · ${run.tickers24h.length} tkr · ${top}${pushed ? " · aviso" : ""}${err}`;
-  console.log(`[job] reddit.rising ${note}`);
-  return note;
+  return redditNote(run, pushed);
+}
+
+function absorbTemporal() {
+  const added = syncTemporalCartera();
+  for (const symbol of added) refreshSymbolSoon(symbol);
+  publishCarteraState();
 }
 
 async function redditSubsJob() {
+  setPhase("reddit subs");
   ensureRedditTables();
   const run = await collectOtherSubs();
+  if (!stillRunning()) return `cortado por timeout · ${redditNote(run, false)}`;
   saveSocialRun(run);
   publishSocial(run);
+  absorbTemporal();
   const pushed = maybePushReddit(run);
-  const top = (run.tickers24h[0]?.ticker ?? run.emerging[0]?.ticker) || "none";
-  const err = run.errors.length ? `; ${run.errors.length} sub error` : "";
-  const note = `24h ${run.windowComments} cmt · ${run.tickers24h.length} tkr · ${top}${pushed ? " · aviso" : ""}${err}`;
-  console.log(`[job] reddit.subs ${note}`);
-  return note;
+  return redditNote(run, pushed);
 }
 
 async function regimeJob() {
@@ -564,7 +613,8 @@ function mappedIdeas(): IdeaRecord[] {
 }
 
 async function ideasJob() {
-  await ingestFeeds("ideas.eval");
+  const ingested = await ingestFeeds("ideas.eval");
+  if (!stillRunning()) return `cortado por timeout · feeds +${ingested.inserted}`;
   const news = recentNews(48, 80);
   let changes = 0;
   for (const idea of listIdeas()) {
@@ -644,7 +694,7 @@ async function digestJob() {
     oil ? `Petróleo ${oil.changePct.toFixed(1)}%` : "Oil n/d",
     news.length ? `Headlines: ${news.map((n) => n.title).slice(0, 3).join(" · ")}` : "Sin headlines nuevas",
     ...ideas.map((i) => `Idea ${i.title}: ${i.verdict}`),
-    "Sin eventos sobre umbral. No es consejo financiero.",
+    "Sin eventos sobre umbral.",
   ];
   saveDigest(lines.join("\n"));
   return "digest publicado";
@@ -737,50 +787,216 @@ export function listJobs(): JobInfo[] {
   return JOBS.map(jobInfo);
 }
 
+const FAST = new Set(["quotes.poll", "regime.tick", "volume.unusual", "reaction.snap"]);
+const BUDGET_MS: Record<string, number> = {
+  "quotes.poll": 3 * 60_000,
+  "regime.tick": 60_000,
+  "volume.unusual": 2 * 60_000,
+  "reaction.snap": 60_000,
+  "fundamentals.poll": 8 * 60_000,
+  "macro.scan": 4 * 60_000,
+  "ticker.events": 4 * 60_000,
+  "market.sentiment": 3 * 60_000,
+  "reddit.rising": 3 * 60_000,
+  "reddit.subs": 8 * 60_000,
+  "ideas.eval": 4 * 60_000,
+  "digest.brief": 60_000,
+};
+
+type Slot = { id: string; since: number; budgetMs: number };
+const queues: Record<Lane, string[]> = { fast: [], slow: [] };
+const drains: Record<Lane, Promise<void> | null> = { fast: null, slow: null };
+const active: Record<Lane, Slot | null> = { fast: null, slow: null };
+const lastOk = new Map<string, number>();
+let lastBusyLog = 0;
+let lastIdleLog = Date.now();
+let lastStaleLog = 0;
+let unhealthyLogged = "";
+
+function laneOf(id: string): Lane {
+  return FAST.has(id) ? "fast" : "slow";
+}
+
+function budgetFor(id: string) {
+  return BUDGET_MS[id] ?? 4 * 60_000;
+}
+
+function enqueue(id: string, front: boolean) {
+  const lane = laneOf(id);
+  const q = queues[lane];
+  if (q.includes(id)) return;
+  if (front) q.unshift(id);
+  else q.push(id);
+}
+
+function safeSetJob(id: string, status: JobStatus, error: string | null, note: string | null) {
+  try {
+    setJob(id, status, error, note);
+  } catch (err) {
+    console.error(`[job] ${id} no pude guardar estado: ${(err as Error).message}`);
+  }
+}
+
+function safePublish(def: JobDef) {
+  try {
+    publishJob(jobInfo(def));
+  } catch (err) {
+    console.error(`[job] ${def.id} no pude publicar estado: ${(err as Error).message}`);
+  }
+}
+
+function laneBit(lane: Lane) {
+  const slot = active[lane];
+  if (!slot) return `${lane} ocioso`;
+  const cola = queues[lane].join(",") || "—";
+  const secs = Math.round((Date.now() - slot.since) / 1000);
+  return `${lane} ${slot.id} ${secs}s · fase ${phaseOf(lane)} · cola ${cola}`;
+}
+
+function noteStaleQuotes(now: number) {
+  const quoteAt = lastOk.get("quotes.poll");
+  if (!quoteAt || now - quoteAt <= 30 * 60_000 || now - lastStaleLog <= 10 * 60_000) return;
+  lastStaleLog = now;
+  console.error(`[watchdog] quotes.poll sin éxito hace ${Math.round((now - quoteAt) / 60000)}min`);
+}
+
+function logHeartbeat() {
+  const now = Date.now();
+  const lag = loopLag();
+  noteStaleQuotes(now);
+  const busy = (["fast", "slow"] as const).some((lane) => active[lane] && now - active[lane]!.since > 25_000);
+  if (busy) {
+    if (now - lastBusyLog < 30_000) return;
+    lastBusyLog = now;
+    console.log(`[watchdog] ${laneBit("fast")} · ${laneBit("slow")} · mqtt ${mqttConnected() ? "on" : "OFF"} · loop ${Math.round(lag / 1000)}s`);
+    return;
+  }
+  if (now - lastIdleLog < 5 * 60_000) return;
+  lastIdleLog = now;
+  const quoteAt = lastOk.get("quotes.poll");
+  const ago = quoteAt ? `quotes hace ${Math.round((now - quoteAt) / 60000)}min` : "quotes aún no";
+  console.log(`[centinela] vivo · ${ago} · ${laneBit("fast")} · ${laneBit("slow")} · mqtt ${mqttConnected() ? "on" : "OFF"} · loop ${Math.round(lag / 1000)}s`);
+}
+
+function healthDetail() {
+  const now = Date.now();
+  const quoteAt = lastOk.get("quotes.poll");
+  return {
+    fast: active.fast?.id ?? null,
+    slow: active.slow?.id ?? null,
+    phaseFast: phaseOf("fast"),
+    phaseSlow: phaseOf("slow"),
+    loopLagMs: loopLag(),
+    quotesAgeSec: quoteAt ? Math.round((now - quoteAt) / 1000) : null,
+    mqtt: mqttConnected(),
+  };
+}
+
+export function schedulerHealth() {
+  const now = Date.now();
+  const lag = loopLag();
+  const fail = (reason: string) => {
+    if (unhealthyLogged !== reason) {
+      unhealthyLogged = reason;
+      console.error(`[watchdog] salud mal: ${reason}`);
+    }
+    return { ok: false, reason, detail: healthDetail() };
+  };
+  if (lag > 60_000) return fail(`event loop atrasado ${Math.round(lag / 1000)}s`);
+  for (const lane of ["fast", "slow"] as const) {
+    const slot = active[lane];
+    if (slot && now - slot.since > slot.budgetMs + 30_000) {
+      return fail(`${slot.id} lleva ${Math.round((now - slot.since) / 1000)}s (tope ${Math.round(slot.budgetMs / 1000)}s) · fase ${phaseOf(lane)}`);
+    }
+  }
+  if (unhealthyLogged) {
+    console.log("[watchdog] salud recuperada");
+    unhealthyLogged = "";
+  }
+  return { ok: true, reason: "ok", detail: healthDetail() };
+}
+
+async function runBounded(def: JobDef, lane: Lane, budget: number): Promise<string> {
+  const live = armJob(def.id);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      disarmJob(def.id);
+      reject(new Error(`timeout ${Math.round(budget / 1000)}s · fase ${phaseOf(lane)}`));
+    }, budget);
+  });
+  try {
+    return await Promise.race([runInLane(lane, live, () => def.run()), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function runJob(id: string): Promise<JobInfo> {
-  queue.push(id);
-  await drain();
   const def = JOBS.find((j) => j.id === id);
   if (!def) throw new Error(`job desconocido: ${id}`);
+  enqueue(id, false);
+  await drain(laneOf(id));
   return jobInfo(def);
 }
 
-async function drain() {
-  if (drainPromise) return drainPromise;
-  drainPromise = (async () => {
-    while (queue.length) {
-      const id = queue.shift()!;
+function drain(lane: Lane): Promise<void> {
+  if (drains[lane]) return drains[lane]!;
+  drains[lane] = (async () => {
+    while (queues[lane].length) {
+      const id = queues[lane].shift()!;
       const def = JOBS.find((j) => j.id === id);
       if (!def) continue;
-      running = id;
-      setJob(id, "running", null, null);
-      publishJob(jobInfo(def));
+      const budget = budgetFor(id);
+      const started = Date.now();
+      active[lane] = { id, since: started, budgetMs: budget };
+      const cola = queues[lane].join(", ") || "—";
+      console.log(`[job] ${lane} inicia ${id} · tope ${Math.round(budget / 1000)}s · cola ${cola} · mqtt ${mqttConnected() ? "on" : "OFF"}`);
       try {
-        const note = await def.run();
-        setJob(id, "ok", null, note);
-        if (id === "quotes.poll" && note) console.log(`[job] ${id} ${note}`);
+        safeSetJob(id, "running", null, null);
+        safePublish(def);
+        const note = await runBounded(def, lane, budget);
+        const secs = ((Date.now() - started) / 1000).toFixed(1);
+        if (note.startsWith("cortado")) {
+          console.error(`[job] ${lane} cortado ${id} ${secs}s · ${note}`);
+          safeSetJob(id, "error", note.slice(0, 240), null);
+        } else {
+          console.log(`[job] ${lane} ok ${id} ${secs}s · ${note}`);
+          safeSetJob(id, "ok", null, note);
+          lastOk.set(id, Date.now());
+        }
       } catch (err) {
         const msg = (err as Error).message.slice(0, 240);
-        console.error(`[job] ${id} error: ${msg}`);
-        setJob(id, "error", msg, null);
+        const secs = ((Date.now() - started) / 1000).toFixed(1);
+        console.error(`[job] ${lane} error ${id} ${secs}s · ${msg}`);
+        safeSetJob(id, "error", msg, null);
+      } finally {
+        active[lane] = null;
+        clearPhase(lane);
+        safePublish(def);
       }
-      publishJob(jobInfo(def));
-      running = null;
     }
   })().finally(() => {
-    drainPromise = null;
+    drains[lane] = null;
+    if (queues[lane].length) void drain(lane);
   });
-  return drainPromise;
+  return drains[lane]!;
 }
 
 export function startScheduler() {
+  onPulse(logHeartbeat);
   const ordered = [JOBS.find((j) => j.id === "quotes.poll")!, ...JOBS.filter((j) => j.id !== "quotes.poll")];
   for (const def of ordered) {
+    const lane = laneOf(def.id);
     const tick = async () => {
-      if (def.id === "quotes.poll") queue.unshift(def.id);
-      else queue.push(def.id);
-      await drain();
-      setTimeout(tick, def.cadenceMs());
+      try {
+        enqueue(def.id, def.id === "quotes.poll");
+        await drain(lane);
+      } catch (err) {
+        console.error(`[job] scheduler ${def.id}: ${(err as Error).message}`);
+      } finally {
+        setTimeout(tick, def.cadenceMs());
+      }
     };
     const first = def.id === "quotes.poll" ? 1500 : def.id === "fundamentals.poll" ? 8 * 60_000 : 12_000 + Math.random() * 4000;
     setTimeout(tick, first);
@@ -810,6 +1026,7 @@ export function getState() {
       holding: listPositions("holding"),
       priority: listPositions("priority"),
       watch: listPositions("watchlist"),
+      temporal: listPositions("temporal"),
     },
     factors: listFactors(),
     ideas,
@@ -825,7 +1042,6 @@ export function getState() {
     },
     graphHint: "Iran → oil/hormuz → SMH/MU",
     settings: appSettings(),
-    disclaimer: "No es consejo financiero. Datos delayed. Centinela es un radar, no un broker.",
     ingress: true,
   };
 }

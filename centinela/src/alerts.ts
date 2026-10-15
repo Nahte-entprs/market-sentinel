@@ -120,14 +120,71 @@ export async function emitIfNeeded(c: Candidate): Promise<AlertRecord | null> {
   return rec;
 }
 
-export function maybePushTickerWatch(alert: TickerAlert): boolean {
+/** Reserva el aviso de este ticker. No manda el teléfono: la pasada junta varios en un solo mensaje. */
+export function claimTickerWatch(alert: TickerAlert): boolean {
   const last = getMeta(`ticker_watch_${alert.symbol}`);
   if (last && Date.now() - Date.parse(last) < cooldownMs()) return false;
   const steep = Math.abs(alert.changePct) >= appSettings().cartera.steepQuietPct;
   if (quietHoursActive() && alert.category !== "holding" && !steep) return false;
   setMeta(`ticker_watch_${alert.symbol}`, nowIso());
-  publishTickerAlert(alert);
   return true;
+}
+
+function batchTitle(labels: string[]): string {
+  const picked: string[] = [];
+  for (const label of labels) {
+    const next = [...picked, label];
+    const hidden = labels.length - next.length;
+    const text = hidden > 0 ? `${next.join(" · ")} · +${hidden}` : next.join(" · ");
+    if (text.length > 80) break;
+    picked.push(label);
+  }
+  if (!picked.length) return labels[0]?.slice(0, 80) || "Cartera";
+  const hidden = labels.length - picked.length;
+  return hidden > 0 ? `${picked.join(" · ")} · +${hidden}` : picked.join(" · ");
+}
+
+function fitLines(lines: string[], max: number): string {
+  const kept: string[] = [];
+  for (const line of lines) {
+    const hidden = lines.length - (kept.length + 1);
+    const tail = hidden > 0 ? `\n… y ${hidden} más` : "";
+    const text = `${[...kept, line].join("\n")}${tail}`;
+    if (text.length > max && kept.length) break;
+    kept.push(line);
+  }
+  const hidden = lines.length - kept.length;
+  const body = kept.join("\n");
+  return hidden > 0 ? `${body}\n… y ${hidden} más` : body;
+}
+
+/** Un aviso de teléfono por pasada. El título muestra los movimientos más grandes. */
+export function pushCarteraBatch(alerts: TickerAlert[]) {
+  if (!alerts.length) return;
+  const ranked = [...alerts].sort(
+    (a, b) => Math.abs(b.changePct) - Math.abs(a.changePct) || b.volumeRatio - a.volumeRatio,
+  );
+  for (const alert of ranked) publishTickerAlert(alert);
+  const at = nowIso();
+  if (ranked.length === 1) {
+    const one = ranked[0];
+    publishNotify({
+      section: "cartera",
+      title: one.title,
+      message: one.message,
+      url: notifyUrl("cartera"),
+      at,
+    });
+    return;
+  }
+  const lines = ranked.map((a) => (a.message ? `${a.title} · ${a.message}` : a.title));
+  publishNotify({
+    section: "cartera",
+    title: batchTitle(ranked.map((a) => a.title)),
+    message: fitLines(lines, 1400),
+    url: notifyUrl("cartera"),
+    at,
+  });
 }
 
 export function maybePushReddit(run: SocialRun): boolean {
@@ -138,14 +195,17 @@ export function maybePushReddit(run: SocialRun): boolean {
   const huge = spikes.some((s) => s.last1h >= appSettings().reddit.alertLast1h);
   if (quietHoursActive() && !huge) return false;
   setMeta(`reddit_spike_${run.source}`, nowIso());
-  const title = `Reddit · ${spikes.map((s) => s.ticker).join(", ")}`;
+  const title =
+    spikes.length === 1
+      ? `${spikes[0].ticker} ${spikes[0].last1h}/h ×${spikes[0].velocity.toFixed(1)}`
+      : spikes.map((s) => `${s.ticker} ${s.last1h}/h`).join(" · ");
   const message = spikes
-    .map((s) => `${s.ticker}: ${s.comments} en 24h, ${s.last1h} última hora (×${s.velocity.toFixed(1)})`)
+    .map((s) => `${s.ticker}: ${s.comments} en 24h, ${s.last1h} en 1h (×${s.velocity.toFixed(1)})`)
     .join(" · ");
   publishNotify({
     section: "reddit",
-    title,
-    message: `${message}. No es consejo financiero.`,
+    title: title.slice(0, 80),
+    message,
     url: notifyUrl("reddit"),
     at: nowIso(),
   });
@@ -159,8 +219,8 @@ export function maybePushCrisis(regime: Regime): boolean {
   setMeta("regime_crisis_push", nowIso());
   publishNotify({
     section: "radar",
-    title: "Centinela · CRISIS",
-    message: "Régimen CRISIS. Umbrales más sensibles. Revisa el radar.",
+    title: "Régimen CRISIS",
+    message: "Umbrales más sensibles. Revisa el radar.",
     url: notifyUrl("radar"),
     at: nowIso(),
   });

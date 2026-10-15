@@ -5,7 +5,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import path from "node:path";
 import fs from "node:fs";
 import { config, ROOT } from "./config.ts";
-import { getState, runJob } from "./jobs.ts";
+import { getState, runJob, schedulerHealth } from "./jobs.ts";
 import { addIdea, listFactors, upsertTicker, removeTicker, parseCategory, moveTicker } from "./universe.ts";
 import { mqttConnected, notifyUrl, publishNotify, publishTextState } from "./mqtt.ts";
 import type { MqttDrafts } from "./mqtt.ts";
@@ -39,7 +39,10 @@ export function buildApi() {
   const app = new Hono();
   app.use("/api/*", cors());
 
-  app.get("/api/health", (c) => c.json({ ok: true, ui: config.previewUi }));
+  app.get("/api/health", (c) => {
+    const health = schedulerHealth();
+    return c.json({ ok: health.ok, reason: health.reason, ui: config.previewUi, ...health.detail }, health.ok ? 200 : 503);
+  });
   app.get("/api/state", (c) => c.json(getState()));
   app.post("/api/jobs/:id/run", async (c) => {
     const id = decodeURIComponent(c.req.param("id"));
@@ -112,6 +115,7 @@ export function buildApi() {
       url: notifyUrl(section),
       at: nowIso(),
       tag: `centinela-test-${Date.now()}`,
+      force: true,
     });
     console.log(`[test] notify ${section} · ${title}`);
     return c.json({ ok: true });

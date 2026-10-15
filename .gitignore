@@ -9,3 +9,11 @@ data/models/*.gguf
 .env
 *.log
 .DS_Store
+pantalla/.pio
+pantalla/android/.gradle
+pantalla/android/build
+pantalla/android/app/build
+pantalla/android/local.properties
+pantalla/fonts/*.ttf
+pantalla/**/*.obj
+pantalla/**/*.exe

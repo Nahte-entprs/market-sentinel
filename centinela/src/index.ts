@@ -3,11 +3,12 @@ import { startScheduler, runJob, listJobs } from "./jobs.ts";
 import { startMqtt, publishTextState } from "./mqtt.ts";
 import { startApi, drafts } from "./api.ts";
 import { publishCarteraState } from "./portfolio.ts";
-import { refreshSymbolSoon, repairMovesFromBars, symbolsToRenew } from "./quotes.ts";
+import { refreshSymbolSoon, symbolsToRenew } from "./quotes.ts";
 import { config } from "./config.ts";
+import { startPulse } from "./pulse.ts";
 
+startPulse();
 seedIfNeeded();
-repairMovesFromBars();
 const gaps = symbolsToRenew();
 console.log(
   `[quote] CNBC · sin precio ${gaps.missing.length} · desactualizados ${gaps.stale.length} · sin curva ${gaps.noCurve.length}`,
@@ -99,5 +100,5 @@ startScheduler();
 refreshCartera();
 
 console.log(
-  `[centinela] arranque · TZ=${config.tz} · ui=${config.previewUi} · mqtt=${config.mqttUrl || "off"} · jobs=${listJobs().length}`,
+  `[centinela] arranque · TZ=${config.tz} · ui=${config.previewUi} · mqtt=${config.mqttUrl || "off"} · jobs=${listJobs().length} · cotizaciones en cola aparte · salud=/api/health`,
 );

@@ -56,6 +56,33 @@ function TimeField({
   );
 }
 
+function Toggle({
+  title,
+  hint,
+  checked,
+  onChange,
+}: {
+  title: string;
+  hint: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-3">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-1 h-4 w-4 accent-ha-accent"
+      />
+      <span>
+        <span className="block text-sm font-medium text-ha-text">{title}</span>
+        <span className="block text-xs text-ha-muted leading-snug">{hint}</span>
+      </span>
+    </label>
+  );
+}
+
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="space-y-3 pt-2">
@@ -160,9 +187,11 @@ export function Config({ state, onReload }: { state: AppState; onReload: () => P
   const c = draft.cartera;
   const a = draft.alertas;
   const g = draft.regimen;
+  const v = draft.avisos ?? { cartera: true, noticias: true, ideas: true, reddit: true };
   const setR = (patch: Partial<AppSettings["reddit"]>) => edit({ ...draft, reddit: { ...r, ...patch } });
   const setC = (patch: Partial<AppSettings["cartera"]>) => edit({ ...draft, cartera: { ...c, ...patch } });
   const setA = (patch: Partial<AppSettings["alertas"]>) => edit({ ...draft, alertas: { ...a, ...patch } });
+  const setV = (patch: Partial<AppSettings["avisos"]>) => edit({ ...draft, avisos: { ...v, ...patch } });
   const setG = (patch: Partial<AppSettings["regimen"]>) => edit({ ...draft, regimen: { ...g, ...patch } });
 
   return (
@@ -372,6 +401,35 @@ export function Config({ state, onReload }: { state: AppState; onReload: () => P
       <details className="rounded-2xl border border-ha-border bg-ha-card p-4">
         <summary className="cursor-pointer font-medium">Alertas</summary>
         <div className="mt-3 space-y-4">
+          <Group title="Qué llega al teléfono">
+            <p className="text-xs text-ha-muted leading-snug">
+              Apagar una opción calla ese aviso en el teléfono. La pestaña sigue mostrando los datos.
+            </p>
+            <Toggle
+              title="Cartera"
+              hint="Precio y volumen de la cartera, juntos en un aviso por pasada."
+              checked={v.cartera}
+              onChange={(on) => setV({ cartera: on })}
+            />
+            <Toggle
+              title="Noticias"
+              hint="Alertas del radar, el briefing y el aviso de régimen CRISIS."
+              checked={v.noticias}
+              onChange={(on) => setV({ noticias: on })}
+            />
+            <Toggle
+              title="Ideas"
+              hint="Cuando una idea cambia de veredicto."
+              checked={v.ideas}
+              onChange={(on) => setV({ ideas: on })}
+            />
+            <Toggle
+              title="Reddit"
+              hint="Picos de menciones."
+              checked={v.reddit}
+              onChange={(on) => setV({ reddit: on })}
+            />
+          </Group>
           <Field
             title="Puntaje mínimo en NORMAL"
             hint="Suma de motivos que hace falta para publicar una alerta cuando el régimen está en NORMAL. Más alto = menos alertas."

@@ -6,9 +6,9 @@ export interface Summarizer {
   summarize(input: Candidate | AlertRecord): Promise<string | null> | string | null;
 }
 
-export function templateSummarize(c: Pick<Candidate, "title" | "why" | "score" | "confidence" | "jobIds">): string {
-  const lines = c.why.slice(0, 8).map((w) => `• ${w.text}`);
-  return `${c.title}\nScore ${c.score.toFixed(1)} · confianza ${Math.round(c.confidence)}% · ${c.jobIds.join(", ")}\n${lines.join("\n")}\nNo es consejo financiero.`;
+export function templateSummarize(c: Pick<Candidate, "title" | "why">): string {
+  const lines = c.why.slice(0, 8).map((w) => w.text);
+  return lines.join("\n") || c.title;
 }
 
 export const TemplateSummarizer: Summarizer = {
@@ -36,7 +36,7 @@ async function callOpenAiCompat(url: string, prompt: string): Promise<string | n
           {
             role: "system",
             content:
-              "Redacta en español un briefing corto (5-8 viñetas) a partir de hechos dados. No inventes precios. Cita fuentes si vienen. No des consejo financiero.",
+              "Redacta en español un briefing corto (5-8 viñetas) a partir de hechos dados. No inventes precios. Cita fuentes si vienen.",
           },
           { role: "user", content: prompt },
         ],

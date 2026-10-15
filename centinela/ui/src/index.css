@@ -20,6 +20,7 @@
   --sec-hold: #3dd68c;
   --sec-prio: #ffb74d;
   --sec-watch: #64b5f6;
+  --sec-temp: #ff8a65;
 }
 
 @media (prefers-color-scheme: light) {
@@ -41,6 +42,7 @@
     --sec-hold: #0d7a45;
     --sec-prio: #8a4b00;
     --sec-watch: #01579b;
+    --sec-temp: #bf360c;
   }
 }
 

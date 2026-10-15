@@ -2,6 +2,8 @@ import Parser from "rss-parser";
 import { config } from "./config.ts";
 import { db, id, json, nowIso, parseJson } from "./db.ts";
 import { extractEntities, jaccard, tokenize } from "./entities.ts";
+import { discardBody, withTimeout } from "./http.ts";
+import { setPhase, stillRunning } from "./pulse.ts";
 import type { NewsItem, SourceTier } from "./types.ts";
 import { readJsonFile } from "./db.ts";
 
@@ -29,7 +31,10 @@ export async function fetchText(url: string): Promise<string> {
     headers: { "User-Agent": config.userAgent, Accept: "application/json, text/plain, */*" },
     signal: AbortSignal.timeout(15000),
   });
-  if (!res.ok) throw new Error(`${res.status} ${url}`);
+  if (!res.ok) {
+    await discardBody(res);
+    throw new Error(`${res.status} ${url}`);
+  }
   return res.text();
 }
 
@@ -38,7 +43,10 @@ export async function fetchJson<T>(url: string): Promise<T> {
     headers: { "User-Agent": config.userAgent, Accept: "application/json" },
     signal: AbortSignal.timeout(15000),
   });
-  if (!res.ok) throw new Error(`${res.status} ${url}`);
+  if (!res.ok) {
+    await discardBody(res);
+    throw new Error(`${res.status} ${url}`);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -60,8 +68,13 @@ export async function ingestFeeds(jobId: string): Promise<{ inserted: number; sc
   let scanned = 0;
   const errors: string[] = [];
   for (const feed of feeds) {
+    if (!stillRunning()) {
+      errors.push("cortado por timeout");
+      break;
+    }
+    setPhase(`feed ${feed.id}`);
     try {
-      const parsed = await parser.parseURL(feed.url);
+      const parsed = await withTimeout(parser.parseURL(feed.url), 18_000, feed.id);
       for (const item of parsed.items.slice(0, 40)) {
         scanned++;
         const title = (item.title || "").trim();
@@ -90,7 +103,9 @@ export async function ingestFeeds(jobId: string): Promise<{ inserted: number; sc
         }
       }
     } catch (err) {
-      errors.push(`${feed.id}: ${(err as Error).message}`.slice(0, 180));
+      const msg = `${feed.id}: ${(err as Error).message}`.slice(0, 180);
+      errors.push(msg);
+      console.error(`[news] ${msg}`);
     }
   }
   return { inserted, scanned, errors };

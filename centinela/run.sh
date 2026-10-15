@@ -12,4 +12,31 @@ export API_PORT=8099
 export CENTINELA_DATA=/data
 
 cd /app
-exec npx tsx src/index.ts
+
+set +e
+stop=0
+child=0
+shutdown() {
+  stop=1
+  if [[ "$child" != "0" ]]; then
+    kill -TERM "$child" 2>/dev/null || true
+    wait "$child" 2>/dev/null || true
+  fi
+}
+trap shutdown TERM INT
+
+while true; do
+  if [[ "$stop" == "1" ]]; then
+    exit 0
+  fi
+  npx tsx src/index.ts &
+  child=$!
+  wait "$child"
+  code=$?
+  child=0
+  if [[ "$stop" == "1" ]]; then
+    exit 0
+  fi
+  echo "[centinela] proceso terminó (código ${code}). Reinicio en 3s."
+  sleep 3
+done

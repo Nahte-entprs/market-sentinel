@@ -4,6 +4,8 @@ import { listTickers } from "./universe.ts";
 import type { QuoteSnap } from "./types.ts";
 import { nyDay, PROFILE_SLOTS, volumeCurve, volumeSignal, type VolumeSignal } from "./volume.ts";
 import { fetchCnbcDaily, fetchCnbcIntraday, fetchCnbcQuotes } from "./cnbc.ts";
+import { discardBody } from "./http.ts";
+import { setPhase, stillRunning } from "./pulse.ts";
 
 const MACRO_SYMS = ["CL=F", "USDJPY=X", "^TNX", "^VIX"];
 const YAHOO_HEADERS = {
@@ -47,15 +49,14 @@ type QuoteRow = {
 };
 
 function rowToSnap(r: QuoteRow): QuoteSnap {
-  const fixed = moveFromBars(r.symbol, r.price);
-  const changePct = fixed ? fixed.changePct : r.change_pct;
-  const prevClose = fixed ? fixed.prev : r.prev_close;
+  const changePct = Number(r.change_pct);
+  const prevClose = Number(r.prev_close);
   return {
     symbol: r.symbol,
     price: r.price,
     prevClose,
     changePct,
-    changeTrusted: fixed != null || Math.abs(changePct) <= 80,
+    changeTrusted: Number.isFinite(changePct) && Number.isFinite(prevClose) && prevClose > 0,
     volume: r.volume,
     avgVolume: r.avg_volume,
     volumeRatio: r.volume_ratio,
@@ -88,37 +89,6 @@ function noteQuoteError(symbol: string, message: string | null) {
     return;
   }
   setMeta(key, message.slice(0, 140));
-}
-
-/** El porcentaje visible sale de las dos últimas velas diarias, nunca del ancla de un gráfico de un año. */
-function moveFromBars(symbol: string, price: number): { prev: number; changePct: number } | null {
-  const bars = db
-    .prepare("SELECT date, close FROM quote_bars WHERE symbol = ? AND close > 0 ORDER BY date ASC")
-    .all(symbol) as { date: string; close: number }[];
-  if (bars.length < 2 || !(price > 0)) return null;
-  const last = bars[bars.length - 1];
-  const prior = bars[bars.length - 2];
-  if (!(prior.close > 0) || !(last.close > 0)) return null;
-  const today = nyDay(Date.now());
-  const utcToday = new Date().toISOString().slice(0, 10);
-  if (last.date === today || last.date === utcToday) {
-    return { prev: prior.close, changePct: ((price - prior.close) / prior.close) * 100 };
-  }
-  if (Math.abs(price - last.close) / last.close > 0.002) {
-    return { prev: last.close, changePct: ((price - last.close) / last.close) * 100 };
-  }
-  return { prev: prior.close, changePct: ((last.close - prior.close) / prior.close) * 100 };
-}
-
-/** Reescribe el cambio del día con las velas ya guardadas, sin esperar a Yahoo. */
-export function repairMovesFromBars() {
-  const rows = db.prepare("SELECT symbol, price FROM quotes").all() as { symbol: string; price: number }[];
-  const upd = db.prepare("UPDATE quotes SET prev_close = ?, change_pct = ? WHERE symbol = ?");
-  for (const row of rows) {
-    const fixed = moveFromBars(row.symbol, row.price);
-    if (!fixed) continue;
-    upd.run(fixed.prev, fixed.changePct, row.symbol);
-  }
 }
 
 function persistQuote(q: {
@@ -231,6 +201,7 @@ async function yahooJson<T>(path: string, timeoutMs: number): Promise<T> {
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (res.status === 429) {
+        await discardBody(res);
         const retryAfter = Number(res.headers.get("retry-after"));
         const pause = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 120_000) : 40_000;
         yahooPauseUntil = Date.now() + pause;
@@ -238,6 +209,7 @@ async function yahooJson<T>(path: string, timeoutMs: number): Promise<T> {
         throw new Error("429");
       }
       if (!res.ok) {
+        await discardBody(res);
         last = `HTTP ${res.status}`;
         if (res.status >= 500 && i === 0) continue;
         throw new Error(last);
@@ -468,7 +440,7 @@ function sessionMove(price: number, timestamps: number[], rawClose: (number | nu
   if (last.ny === today) return { prev: prior, changePct: ((price - prior) / prior) * 100 };
   const leftLastClose = Math.abs(price - last.close) / last.close > 0.002;
   if (leftLastClose) return { prev: last.close, changePct: ((price - last.close) / last.close) * 100 };
-  return { prev: prior, changePct: ((last.close - prior) / prior) * 100 };
+  return { prev: last.close, changePct: 0 };
 }
 
 function masFromStored(symbol: string) {
@@ -497,6 +469,8 @@ export async function refreshFromCnbc(symbols: string[], onEach?: () => void): P
   if (error) console.error(`[quote] CNBC ${error}`);
   let ok = 0;
   for (const q of quotes) {
+    if (!stillRunning()) break;
+    setPhase(`precio ${q.symbol}`);
     const mas = masFromStored(q.symbol);
     persistQuote({
       symbol: q.symbol,
@@ -512,6 +486,7 @@ export async function refreshFromCnbc(symbols: string[], onEach?: () => void): P
     console.log(`[quote] ${q.symbol} ${q.price.toFixed(2)} ${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% · CNBC`);
     ok++;
     onEach?.();
+    await Promise.resolve();
   }
   for (const symbol of missing) {
     noteQuoteError(symbol, "CNBC sin datos");
@@ -670,6 +645,11 @@ export async function refreshFundamentals(symbols: string[]): Promise<{ ok: numb
   const unique = [...new Set(symbols)].filter(Boolean);
   for (let i = 0; i < unique.length; i++) {
     const symbol = unique[i];
+    if (!stillRunning()) {
+      stopped = true;
+      break;
+    }
+    setPhase(`fundamentales ${symbol}`);
     try {
       await quoteSummary(symbol);
       ok++;

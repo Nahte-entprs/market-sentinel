@@ -4,6 +4,8 @@ import { isMegaCap, lexiconPolarity } from "./entities.ts";
 import { extractSocialTickers, pickCommentTicker } from "./ticker-filter.ts";
 import { MARKET_TZ } from "./config.ts";
 import { appSettings, blockPhrases } from "./settings.ts";
+import { discardBody } from "./http.ts";
+import { setPhase, stillRunning } from "./pulse.ts";
 import type { TickerPace } from "./types.ts";
 
 /**
@@ -224,39 +226,43 @@ async function redditJson<T>(pathAndQuery: string): Promise<T> {
     : pathAndQuery.startsWith("/")
       ? pathAndQuery
       : `/${pathAndQuery}`;
-  const urls = pathAndQuery.startsWith("http")
-    ? [pathAndQuery]
-    : [
-        `https://www.reddit.com${path}`,
-        `https://www.reddit.com${path.replace("/hot.json", "/hot/.json")}`,
-      ];
+  const url = pathAndQuery.startsWith("http") ? pathAndQuery : `https://www.reddit.com${path}`;
+  setPhase(`reddit ${path.split("?")[0].slice(0, 72)}`);
   const agents = [
     `Centinela/1.2.4 (HAOS; +https://github.com/Nahte-entprs/market-sentinel)`,
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
   ];
   let lastErr = "reddit: sin respuesta";
-  for (const url of [...new Set(urls)]) {
-    for (const ua of agents) {
-      lastFetch = Date.now();
-      try {
-        const res = await fetch(url, {
-          headers: { "User-Agent": ua, Accept: "application/json" },
-          signal: AbortSignal.timeout(18000),
-          redirect: "follow",
-        });
-        if (!res.ok) {
-          lastErr = `${res.status} ${url}`;
-          continue;
-        }
-        const ctype = res.headers.get("content-type") || "";
-        if (!ctype.includes("json") && !ctype.includes("javascript")) {
-          lastErr = `no-json ${url}`;
-          continue;
-        }
-        return (await res.json()) as T;
-      } catch (e) {
-        lastErr = `${(e as Error).message} ${url}`;
+  for (const ua of agents) {
+    if (!stillRunning()) throw new Error("cortado por timeout");
+    lastFetch = Date.now();
+    try {
+      const res = await fetch(url, {
+        headers: { "User-Agent": ua, Accept: "application/json" },
+        signal: AbortSignal.timeout(18000),
+        redirect: "follow",
+      });
+      if (res.status === 401 || res.status === 403 || res.status === 429) {
+        await discardBody(res);
+        lastErr = `${res.status} ${url}`;
+        continue;
       }
+      if (!res.ok) {
+        await discardBody(res);
+        lastErr = `${res.status} ${url}`;
+        continue;
+      }
+      const ctype = res.headers.get("content-type") || "";
+      if (!ctype.includes("json") && !ctype.includes("javascript")) {
+        await discardBody(res);
+        lastErr = `no-json ${url}`;
+        continue;
+      }
+      return (await res.json()) as T;
+    } catch (e) {
+      const msg = (e as Error).message;
+      lastErr = msg.includes(url) ? msg : `${msg} ${url}`;
+      if (msg.startsWith("cortado")) break;
     }
   }
   throw new Error(lastErr);
@@ -365,6 +371,7 @@ async function fetchArchiveComments(sub: string, size: number): Promise<PulledCo
         signal: AbortSignal.timeout(20000),
       });
       if (!res.ok) {
+        await discardBody(res);
         last = `${res.status} ${url}`;
         continue;
       }
@@ -508,6 +515,33 @@ function ingestList(sub: string, threadId: string, kind: string, comments: Pulle
       capturedAt: ts,
     });
   }
+  ingestTitle(sub, threadId, postTitle, ts);
+}
+
+/** El título cuenta una vez por post. No se copia a cada comentario, si no un hilo de 40 respuestas inflaría el ticker. */
+function ingestTitle(sub: string, threadId: string, postTitle: string, ts: string) {
+  const title = postTitle.trim();
+  if (!title || !threadId || threadId === "none" || threadId === "archive") return;
+  const flag = cheapFlag(title, "");
+  if (flag === "deleted" || flag === "automod") return;
+  const tickers = extractSocialTickers(title);
+  if (!tickers.length) return;
+  persistComment({
+    id: `title:${sub}:${threadId}`,
+    sub,
+    threadId,
+    kind: "title",
+    body: title,
+    score: 0,
+    author: "",
+    authorFlair: "",
+    postTitle: title,
+    created: ts,
+    nyDay: nyDayFromCreated(0, ts),
+    flag,
+    tickers,
+    capturedAt: ts,
+  });
 }
 
 export function mergeHits(groups: TickerHit[][]): TickerHit[] {
@@ -616,6 +650,12 @@ function mentionTrend(
 export function liveTickers(source: "wsb" | "subs"): TickerPace[] {
   const c = cfg();
   return paceTickers(source === "wsb" ? [c.wsb] : c.subs);
+}
+
+/** Pico en cualquier sub que Centinela lee, WSB incluido. */
+export function redditHeat(): TickerPace[] {
+  const c = cfg();
+  return paceTickers([c.wsb, ...c.subs]);
 }
 
 function board24h(
@@ -849,23 +889,31 @@ export async function collectWsbDaily(): Promise<SocialRun> {
   let threadTitle: string | null = null;
   let comments: Awaited<ReturnType<typeof fetchComments>> = [];
   let threadId = "";
+  setPhase(`reddit r/${c.wsb}`);
   try {
     const hot = await fetchHot(c.wsb, 20);
     const daily = preferWsbThread(hot, c.dailyTitleIncludes);
     if (!daily?.id) throw new Error("no daily/weekend thread");
     threadId = daily.id;
     threadTitle = daily.title ?? null;
+    setPhase(`reddit r/${c.wsb} comentarios`);
     comments = await fetchComments(c.wsb, daily.id, c.commentsDaily, "new");
   } catch (e) {
-    errors.push(`json: ${(e as Error).message}`.slice(0, 160));
+    const msg = (e as Error).message;
+    errors.push(`json: ${msg}`.slice(0, 160));
+    console.warn(`[reddit] r/${c.wsb} json falló: ${msg.slice(0, 160)}`);
   }
-  if (!comments.length) {
+  if (!comments.length && stillRunning()) {
+    setPhase(`archivo r/${c.wsb}`);
     try {
       comments = await fetchArchiveComments(c.wsb, c.commentsDaily);
       threadId = threadId || "archive";
       threadTitle = threadTitle || "r/wallstreetbets recientes (archivo; Reddit JSON bloqueado)";
+      console.warn(`[reddit] r/${c.wsb} archivo ${comments.length} comentarios nuevos`);
     } catch (e) {
-      errors.push(`archivo: ${(e as Error).message}`.slice(0, 160));
+      const msg = (e as Error).message;
+      errors.push(`archivo: ${msg}`.slice(0, 160));
+      console.warn(`[reddit] r/${c.wsb} archivo falló: ${msg.slice(0, 160)}`);
     }
   }
   ingestList(c.wsb, threadId || "none", "daily", comments, ts, threadTitle ?? "");
@@ -873,6 +921,7 @@ export async function collectWsbDaily(): Promise<SocialRun> {
   const insW = db.prepare("INSERT OR REPLACE INTO wsb_mentions (ticker, captured_at, count) VALUES (?, ?, ?)");
   for (const h of hits) insW.run(h.ticker, ts, h.comments);
   const em = rankEmerging(hits);
+  setPhase("reddit tablero wsb");
   const board = board24h(
     [c.wsb],
     em.map((h) => h.ticker),
@@ -905,21 +954,33 @@ export async function collectOtherSubs(): Promise<SocialRun> {
   let nComments = 0;
   const perSub: { sub: string; hits: TickerHit[] }[] = [];
   for (const sub of c.subs) {
+    if (!stillRunning()) {
+      errors.push("cortado por timeout");
+      break;
+    }
+    setPhase(`reddit r/${sub}`);
     try {
       let n = 0;
       try {
         const hot = await fetchHot(sub, 12);
         const posts = hot.filter((p) => !p.stickied).slice(0, c.hotPostsPerSub);
         for (const p of posts) {
+          if (!stillRunning()) break;
           if (!p.id) continue;
+          setPhase(`reddit r/${sub} comentarios`);
           const comments = await fetchComments(sub, p.id, c.commentsPerPost, "new");
           n += comments.length;
           ingestList(sub, p.id, "post", comments, ts, p.title ?? "");
         }
-      } catch {
+      } catch (e) {
+        const msg = (e as Error).message;
+        console.warn(`[reddit] r/${sub} json falló: ${msg.slice(0, 140)} · archivo`);
+        if (!stillRunning()) throw e;
+        setPhase(`archivo r/${sub}`);
         const comments = await fetchArchiveComments(sub, c.commentsPerPost * c.hotPostsPerSub);
         n = comments.length;
         ingestList(sub, "archive", "post", comments, ts, "");
+        console.warn(`[reddit] r/${sub} archivo ${comments.length} comentarios nuevos`);
       }
       nComments += n;
       perSub.push({ sub, hits: snapshotTickers(sub, ts) });
@@ -930,6 +991,7 @@ export async function collectOtherSubs(): Promise<SocialRun> {
   const hits = mergeHits(perSub.map((p) => p.hits));
   const bySub = emergingBlocks(perSub);
   const em = rankEmerging(hits);
+  setPhase("reddit tablero subs");
   const board = board24h(
     c.subs,
     em.map((h) => h.ticker),

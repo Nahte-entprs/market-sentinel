@@ -2,7 +2,7 @@
 
 Centinela vigila cotizaciones, noticias, macros y Reddit **en loop**, sin gastar tokens. En el G3 ves y editas todo en la **barra lateral** de Home Assistant (panel del add-on, como Zigbee2MQTT). Los avisos llegan a Companion.
 
-No es consejo financiero. No es un chatbot ni un broker.
+No es un chatbot ni un broker.
 
 ## HAOS: tienda de complementos
 

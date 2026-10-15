@@ -71,7 +71,7 @@ export type JobInfo = {
   lastNote: string | null;
 };
 
-export type TickerCategory = "holding" | "priority" | "watchlist";
+export type TickerCategory = "holding" | "priority" | "watchlist" | "temporal";
 
 export type QuoteSnap = {
   symbol: string;
@@ -91,7 +91,7 @@ export type QuoteSnap = {
   analystCount: number | null;
   week52High: number | null;
   week52Low: number | null;
-  /** Falso cuando el porcentaje guardado no se puede apoyar en dos velas diarias. */
+  /** Falso si el cambio del día que mandó la cotización no es un número usable. */
   changeTrusted: boolean;
 };
 
@@ -165,6 +165,8 @@ export type CentinelaNotify = {
   url: string;
   at: string;
   tag?: string;
+  /** El botón de prueba manda igual aunque esa sección esté en silencio. */
+  force?: boolean;
 };
 
 export type TickerPace = {
