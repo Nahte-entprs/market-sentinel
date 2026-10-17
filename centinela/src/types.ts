@@ -71,7 +71,7 @@ export type JobInfo = {
   lastNote: string | null;
 };
 
-export type TickerCategory = "holding" | "priority" | "watchlist" | "temporal";
+export type TickerCategory = "holding" | "priority" | "watchlist" | "temporal" | "live";
 
 export type QuoteSnap = {
   symbol: string;

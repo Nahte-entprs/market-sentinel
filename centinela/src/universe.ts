@@ -15,7 +15,7 @@ export type TickerRow = {
   sort_order: number;
 };
 
-const CATEGORIES = new Set<TickerCategory>(["holding", "priority", "watchlist", "temporal"]);
+const CATEGORIES = new Set<TickerCategory>(["holding", "priority", "watchlist", "temporal", "live"]);
 
 function mapTicker(r: Record<string, unknown>): TickerRow {
   const cat = String(r.category ?? "watchlist");
@@ -92,6 +92,7 @@ function ensureJobRows() {
     "reaction.snap",
     "ideas.eval",
     "fundamentals.poll",
+    "tape.live",
   ];
   const ins = db.prepare(`INSERT OR IGNORE INTO job_runs (job_id, last_status) VALUES (?, 'idle')`);
   for (const id of jobs) ins.run(id);

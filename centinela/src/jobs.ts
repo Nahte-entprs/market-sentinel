@@ -1,6 +1,6 @@
 import { db, json, nowIso, parseJson, getSetting, getMeta, setMeta } from "./db.ts";
 import { isRth } from "./config.ts";
-import { listFactors, listIdeas, listTickers } from "./universe.ts";
+import { listFactors, listIdeas, listTickers, listTickersByCategory } from "./universe.ts";
 import { syncTemporalCartera } from "./temporal.ts";
 import { allQuoteSymbols, allQuotes, getQuote, needsDailyBars, readVolumeSignal, refreshFromCnbc, refreshCnbcCurve, refreshCnbcDaily, refreshFundamentals, refreshSymbolSoon, symbolsToRenew, threeDayTrend } from "./quotes.ts";
 import { claimTickerWatch, emitIfNeeded, lastAlert, lastDigest, listAlerts, maybePushCrisis, maybePushReddit, pushCarteraBatch, saveDigest } from "./alerts.ts";
@@ -11,7 +11,7 @@ import { computeRegime, confidenceFrom, currentRegime, scoreThreshold } from "./
 import { collectOtherSubs, collectWsbDaily, ensureRedditTables, liveTickers } from "./reddit-social.ts";
 import { mqttConnected, publishIdeas, publishJob, publishRegime, publishSocial, publishStatus } from "./mqtt.ts";
 import { armJob, clearPhase, disarmJob, loopLag, onPulse, phaseOf, runInLane, setPhase, stillRunning, type Lane } from "./pulse.ts";
-import { listPositions, publishCarteraState } from "./portfolio.ts";
+import { listPositions, publishCarteraState, publishLiveTape } from "./portfolio.ts";
 import { loadSocialRun, saveSocialRun } from "./social-store.ts";
 import { appSettings, watchBand } from "./settings.ts";
 import type { Candidate, IdeaRecord, JobInfo, JobStatus, TickerAlert, WhyItem } from "./types.ts";
@@ -203,6 +203,7 @@ async function volumeJob() {
     return cut ? `cortado por timeout · ${body}` : body;
   };
   for (const t of names) {
+    if (t.category === "live") continue;
     if (!stillRunning()) return finish(true);
     setPhase(`volumen ${t.symbol}`);
     await Promise.resolve();
@@ -727,8 +728,22 @@ async function reactionJob() {
   return `${n} snapshots T+`;
 }
 
+async function tapeJob() {
+  const symbols = listTickersByCategory("live").map((t) => t.symbol);
+  if (!symbols.length) {
+    publishLiveTape();
+    return "sin tickers";
+  }
+  setPhase("cinta");
+  const r = await refreshFromCnbc(symbols);
+  publishCarteraState();
+  if (r.ok === 0 && (r.error || r.missing.length)) throw new Error(r.error || r.missing[0] || "CNBC sin precios");
+  return `${r.ok} precios`;
+}
+
 export const JOBS: JobDef[] = [
   { id: "quotes.poll", name: "Cotizaciones", description: "Precio, volumen y medias móviles", cadenceMs: () => (isRth() ? 5 : 15) * 60_000, run: quotesJob },
+  { id: "tape.live", name: "En tiempo real", description: "Precio y volumen de esa cartera, para la pantalla", cadenceMs: () => (isRth() ? 60 : 5 * 60) * 1000, run: tapeJob },
   { id: "fundamentals.poll", name: "Fundamentals", description: "Rating analistas, PT y 52w", cadenceMs: () => 60 * 60_000, run: fundamentalsJob },
   { id: "regime.tick", name: "Régimen", description: "NORMAL → CRISIS", cadenceMs: () => (isRth() ? 5 : 15) * 60_000, run: regimeJob },
   {
@@ -787,9 +802,10 @@ export function listJobs(): JobInfo[] {
   return JOBS.map(jobInfo);
 }
 
-const FAST = new Set(["quotes.poll", "regime.tick", "volume.unusual", "reaction.snap"]);
+const FAST = new Set(["quotes.poll", "tape.live", "regime.tick", "volume.unusual", "reaction.snap"]);
 const BUDGET_MS: Record<string, number> = {
   "quotes.poll": 3 * 60_000,
+  "tape.live": 45_000,
   "regime.tick": 60_000,
   "volume.unusual": 2 * 60_000,
   "reaction.snap": 60_000,
@@ -1027,6 +1043,7 @@ export function getState() {
       priority: listPositions("priority"),
       watch: listPositions("watchlist"),
       temporal: listPositions("temporal"),
+      live: listPositions("live"),
     },
     factors: listFactors(),
     ideas,

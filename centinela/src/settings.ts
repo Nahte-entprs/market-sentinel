@@ -268,7 +268,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
 /** Temporal avisa con los cortes de watchlist, para no sumar otra fuente de spam. */
 export function watchBand(category: TickerCategory): WatchBand {
   const c = appSettings().cartera;
-  if (category === "temporal") return c.watchlist;
+  if (category === "temporal" || category === "live") return c.watchlist;
   return c[category];
 }
 

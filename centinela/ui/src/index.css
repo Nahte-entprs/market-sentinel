@@ -21,6 +21,7 @@
   --sec-prio: #ffb74d;
   --sec-watch: #64b5f6;
   --sec-temp: #ff8a65;
+  --sec-live: #ce93d8;
 }
 
 @media (prefers-color-scheme: light) {
@@ -43,6 +44,7 @@
     --sec-prio: #8a4b00;
     --sec-watch: #01579b;
     --sec-temp: #bf360c;
+    --sec-live: #6a1b9a;
   }
 }
 

@@ -181,6 +181,13 @@ function publishDiscovery() {
     json_attributes_topic: `${PREFIX}/sensor/temporal_attr`,
     icon: "mdi:fire",
   });
+  disc("sensor", "tape", {
+    name: "Cinta",
+    state_topic: `${PREFIX}/tape`,
+    value_template: "{{ value_json.n }}",
+    json_attributes_topic: `${PREFIX}/tape`,
+    icon: "mdi:chart-line",
+  });
   disc("sensor", "ideas", {
     name: "Ideas de mercado",
     state_topic: `${PREFIX}/sensor/ideas`,
@@ -449,11 +456,16 @@ export function publishWatchlist(symbols: string[]) {
   pub(`${PREFIX}/sensor/watchlist_attr`, { tickers: symbols });
 }
 
+export function publishTape(rows: { s: string; p: string; c: string; v: string }[]) {
+  pub(`${PREFIX}/tape`, { n: rows.length, rows }, true);
+}
+
 export function publishCartera(lists: {
   holding: CarteraPosition[];
   priority: CarteraPosition[];
   watch: CarteraPosition[];
   temporal: CarteraPosition[];
+  live: CarteraPosition[];
 }) {
   pub(`${PREFIX}/sensor/holding`, String(lists.holding.length));
   pub(`${PREFIX}/sensor/holding_attr`, { positions: lists.holding });
@@ -463,6 +475,8 @@ export function publishCartera(lists: {
   pub(`${PREFIX}/sensor/watch_attr`, { positions: lists.watch });
   pub(`${PREFIX}/sensor/temporal`, String(lists.temporal.length));
   pub(`${PREFIX}/sensor/temporal_attr`, { positions: lists.temporal });
+  pub(`${PREFIX}/sensor/live`, String(lists.live.length));
+  pub(`${PREFIX}/sensor/live_attr`, { positions: lists.live });
 }
 
 export function publishTickerAlert(alert: TickerAlert) {

@@ -117,7 +117,7 @@ export type Idea = {
   updatedAt: string;
 };
 
-export type Category = "holding" | "priority" | "watchlist" | "temporal";
+export type Category = "holding" | "priority" | "watchlist" | "temporal" | "live";
 
 export type Position = {
   symbol: string;
@@ -231,6 +231,7 @@ export type AppState = {
     priority: Position[];
     watch: Position[];
     temporal: Position[];
+    live: Position[];
   };
   factors: { id: string; label: string }[];
   ideas: Idea[];

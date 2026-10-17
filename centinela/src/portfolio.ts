@@ -1,6 +1,6 @@
 import { listTickers, listTickersByCategory } from "./universe.ts";
 import { getQuote, quoteError, readVolumeCurve, readVolumeSignal } from "./quotes.ts";
-import { publishCartera, publishWatchlist } from "./mqtt.ts";
+import { publishCartera, publishTape, publishWatchlist } from "./mqtt.ts";
 import { MIN_SLOT_SAMPLES } from "./volume.ts";
 import { watchBand } from "./settings.ts";
 import type { CarteraPosition, TickerCategory } from "./types.ts";
@@ -150,6 +150,16 @@ export function toPosition(t: TickerRow): CarteraPosition {
   };
 }
 
+export function publishLiveTape() {
+  const rows = listTickersByCategory("live").map((t) => {
+    const q = getQuote(t.symbol);
+    const change = q && q.changeTrusted ? pctFmt(q.changePct) : "";
+    const vol = q && q.volumeRatio > 0 ? `${q.volumeRatio.toFixed(1)}x` : "";
+    return { s: t.symbol, p: q ? usd(q.price) : "n/d", c: change, v: vol };
+  });
+  publishTape(rows);
+}
+
 export function listPositions(category: TickerCategory): CarteraPosition[] {
   const rows = listTickersByCategory(category).map(toPosition);
   if (category !== "holding") return rows;
@@ -169,7 +179,9 @@ export function publishCarteraState() {
         priority: listPositions("priority"),
         watch: listPositions("watchlist"),
         temporal: listPositions("temporal"),
+        live: listPositions("live"),
       });
+      publishLiveTape();
     } catch (err) {
       console.error(`[cartera] ${(err as Error).message}`);
     }

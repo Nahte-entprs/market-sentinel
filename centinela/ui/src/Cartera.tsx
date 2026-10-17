@@ -3,6 +3,7 @@ import { del, post } from "./api";
 import type { AppState, Category, Position } from "./types";
 
 const LABELS: Record<Category, string> = {
+  live: "En Tiempo Real",
   holding: "Holding",
   priority: "Priority",
   watchlist: "Watchlist",
@@ -29,6 +30,11 @@ const SECTION: Record<Category, { tone: string; wash: string; ink: string }> = {
     tone: "var(--sec-temp)",
     wash: "color-mix(in srgb, var(--sec-temp) 18%, transparent)",
     ink: "var(--sec-temp)",
+  },
+  live: {
+    tone: "var(--sec-live)",
+    wash: "color-mix(in srgb, var(--sec-live) 18%, transparent)",
+    ink: "var(--sec-live)",
   },
 };
 
@@ -101,7 +107,7 @@ function maLabel(days: string, level: number | null, delta: number | null) {
 const FOLD_KEY = "centinela.cartera.folded";
 
 function readFolded(): Record<Category, boolean> {
-  const empty = { holding: false, priority: false, watchlist: false, temporal: false };
+  const empty = { holding: false, priority: false, watchlist: false, temporal: false, live: false };
   try {
     const parsed = JSON.parse(localStorage.getItem(FOLD_KEY) || "") as Partial<Record<Category, boolean>>;
     return {
@@ -109,6 +115,7 @@ function readFolded(): Record<Category, boolean> {
       priority: !!parsed.priority,
       watchlist: !!parsed.watchlist,
       temporal: !!parsed.temporal,
+      live: !!parsed.live,
     };
   } catch {
     return empty;
@@ -225,6 +232,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
     if (cat === "holding") return state.cartera.holding;
     if (cat === "priority") return state.cartera.priority;
     if (cat === "temporal") return state.cartera.temporal ?? [];
+    if (cat === "live") return state.cartera.live ?? [];
     return state.cartera.watch;
   }
 
@@ -250,7 +258,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
         />
       </div>
 
-      {(["holding", "priority", "watchlist", "temporal"] as Category[]).map((cat) => {
+      {(["live", "holding", "priority", "watchlist", "temporal"] as Category[]).map((cat) => {
         const sec = SECTION[cat];
         const rows = list(cat);
         const closed = folded[cat];
@@ -273,7 +281,13 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                   {LABELS[cat]}
                 </span>
                 <span className="block text-[11px] text-ha-muted">
-                  {cat === "holding" ? "Por valor de mercado" : cat === "temporal" ? "Pico de Reddit · sale al enfriarse" : "Orden manual"}
+                  {cat === "holding"
+                    ? "Por valor de mercado"
+                    : cat === "temporal"
+                      ? "Pico de Reddit · sale al enfriarse"
+                      : cat === "live"
+                        ? "Precio y volumen en la pantalla"
+                        : "Orden manual"}
                   {rows.length ? ` · ${rows.length}` : ""}
                 </span>
               </span>
@@ -294,14 +308,18 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
           </div>
           {closed ? null : rows.length === 0 ? (
             <p className="px-3 py-4 text-sm text-ha-muted">
-              {cat === "temporal" ? "Vacío. Entra sola cuando un ticker está en pico en Reddit." : "Vacío."}
+              {cat === "temporal"
+                ? "Vacío. Entra sola cuando un ticker está en pico en Reddit."
+                : cat === "live"
+                  ? "Vacío. Lo que agregues aquí se muestra en la pantalla."
+                  : "Vacío."}
             </p>
           ) : (
           <ul className="space-y-2 px-2 py-2">
             {rows.map((p) => {
               const up = (p.change_pct ?? 0) >= 0;
               const expanded = open === p.symbol;
-              const band = cat === "temporal" ? state.settings.cartera.watchlist : state.settings.cartera[cat];
+              const band = cat === "temporal" || cat === "live" ? state.settings.cartera.watchlist : state.settings.cartera[cat];
               const fairUp = (p.fair_delta_pct ?? 0) > 0;
               const fairDown = (p.fair_delta_pct ?? 0) < 0;
               const paceHot = p.pace_ratio != null && p.pace_samples >= 5 && p.pace_ratio >= band.sessionPaceRatio;
