@@ -108,6 +108,8 @@ export type CarteraPosition = {
   /** (precio − fair) / fair. Positivo: el mercado está por encima del fair. */
   fair_delta_pct: number | null;
   fair_delta_fmt: string;
+  /** Precio de compra o venta de corto plazo. Vacío si no se compara. */
+  tape_level: number | null;
   price: number | null;
   price_fmt: string;
   change_pct: number | null;

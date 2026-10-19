@@ -122,6 +122,7 @@ export function toPosition(t: TickerRow): CarteraPosition {
     fair_fmt: fair ? usd(fair) : null,
     fair_delta_pct: fairDelta,
     fair_delta_fmt: fairDelta != null ? pctFmt(fairDelta) : "",
+    tape_level: t.tape_level,
     price,
     price_fmt: price != null ? usd(price) : "n/d",
     change_pct: q && q.changeTrusted ? q.changePct : null,
@@ -171,13 +172,42 @@ export function publishLiveTape() {
         ? `${q.volumeRatio.toFixed(1)}x`
         : "";
     const series = readSessionSeries(t.symbol);
+    const t1 = Math.floor(Date.now() / 1000);
+    const t0 = t1 - 8 * 3600;
+    const slots = 96;
+    const step = (t1 - t0) / slots;
+    const bucketPx: (number | null)[] = Array(slots).fill(null);
+    const bucketVl: number[] = Array(slots).fill(0);
+    for (const bar of series) {
+      const sec = Math.floor(bar.ms / 1000);
+      let idx = Math.floor((sec - t0) / step);
+      if (idx < 0) continue;
+      if (idx >= slots) idx = slots - 1;
+      bucketPx[idx] = bar.close;
+      bucketVl[idx] = bar.volume;
+    }
+    if (price && price > 0) bucketPx[slots - 1] = Math.round(price * 100) / 100;
+    const i: number[] = [];
+    const px: number[] = [];
+    const vl: number[] = [];
+    for (let k = 0; k < slots; k++) {
+      const v = bucketPx[k];
+      if (v == null) continue;
+      i.push(k);
+      px.push(v);
+      vl.push(bucketVl[k]);
+    }
     return {
       s: t.symbol,
       p: price ? usd(price) : "n/d",
       c: changePct == null ? "" : pctFmt(changePct),
       v: vol,
-      px: series.map((bar) => bar.close),
-      vl: series.map((bar) => bar.volume),
+      t0,
+      t1,
+      lv: t.tape_level && t.tape_level > 0 ? Math.round(t.tape_level * 100) / 100 : undefined,
+      i,
+      px,
+      vl,
     };
   });
   publishTape(rows);

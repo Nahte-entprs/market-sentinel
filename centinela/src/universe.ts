@@ -12,6 +12,7 @@ export type TickerRow = {
   invested_usd: number;
   shares: number;
   fair_price: number | null;
+  tape_level: number | null;
   sort_order: number;
 };
 
@@ -29,6 +30,7 @@ function mapTicker(r: Record<string, unknown>): TickerRow {
     invested_usd: Number(r.invested_usd ?? 0),
     shares: Number(r.shares ?? 0),
     fair_price: r.fair_price == null ? null : Number(r.fair_price),
+    tape_level: r.tape_level == null || !(Number(r.tape_level) > 0) ? null : Number(r.tape_level),
     sort_order: Number(r.sort_order ?? 0),
   };
 }
@@ -99,7 +101,7 @@ function ensureJobRows() {
 }
 
 const TICKER_COLS =
-  "symbol, name, sector, kind, enabled, category, invested_usd, shares, fair_price, sort_order";
+  "symbol, name, sector, kind, enabled, category, invested_usd, shares, fair_price, tape_level, sort_order";
 
 export function listTickers(kind?: string): TickerRow[] {
   if (kind) {
@@ -159,6 +161,7 @@ export function upsertTicker(opts: {
   category?: TickerCategory | string;
   shares?: number;
   fairPrice?: number | null;
+  tapeLevel?: number | null;
 }) {
   const s = normalizeSymbol(opts.symbol);
   const existing = getTicker(s);
@@ -176,14 +179,22 @@ export function upsertTicker(opts: {
   } else {
     fair = existing.fair_price;
   }
+  let level: number | null;
+  if (opts.tapeLevel === undefined) {
+    level = existing?.tape_level ?? null;
+  } else if (opts.tapeLevel != null && opts.tapeLevel > 0) {
+    level = opts.tapeLevel;
+  } else {
+    level = null;
+  }
   const name = opts.name || existing?.name || s;
   const sector = opts.sector || existing?.sector || "ai";
   const categoryChanged = !existing || existing.category !== category || existing.enabled === 0;
   const sort = categoryChanged ? nextSortOrder(category) : existing.sort_order;
 
   db.prepare(
-    `INSERT INTO tickers (symbol, name, sector, kind, enabled, added_at, category, invested_usd, shares, fair_price, sort_order)
-     VALUES (?, ?, ?, 'ticker', 1, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO tickers (symbol, name, sector, kind, enabled, added_at, category, invested_usd, shares, fair_price, tape_level, sort_order)
+     VALUES (?, ?, ?, 'ticker', 1, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(symbol) DO UPDATE SET
        enabled = 1,
        name = excluded.name,
@@ -192,8 +203,9 @@ export function upsertTicker(opts: {
        invested_usd = excluded.invested_usd,
        shares = excluded.shares,
        fair_price = excluded.fair_price,
+       tape_level = excluded.tape_level,
        sort_order = excluded.sort_order`,
-  ).run(s, name, sector, nowIso(), category, invested, shares, fair, sort);
+  ).run(s, name, sector, nowIso(), category, invested, shares, fair, level, sort);
   return s;
 }
 

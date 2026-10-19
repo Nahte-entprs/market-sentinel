@@ -36,15 +36,24 @@ int tape_apply(const char *line) {
   copy_field(rows[at].price, sizeof rows[at].price, doc["price"] | "");
   copy_field(rows[at].change, sizeof rows[at].change, doc["chg"] | "");
   copy_field(rows[at].volume, sizeof rows[at].volume, doc["vol"] | "");
+  rows[at].t0 = doc["t0"] | 0;
+  rows[at].t1 = doc["t1"] | 0;
+  float level = doc["lv"] | 0.0f;
+  rows[at].level = level > 0 ? level : 0;
   rows[at].n = 0;
+  JsonArray idx = doc["i"].as<JsonArray>();
   JsonArray px = doc["px"].as<JsonArray>();
   JsonArray vl = doc["vl"].as<JsonArray>();
   int n = 0;
-  for (JsonVariant item : px) {
-    if (n >= TAPE_CURVE_CAP) break;
-    rows[at].px[n] = item.as<float>();
+  int count_px = (int)px.size();
+  for (int k = 0; k < count_px && n < TAPE_SLOTS; k++) {
+    int slot = idx ? (int)idx[k].as<int>() : k;
+    if (slot < 0 || slot >= TAPE_SLOTS) continue;
+    if (px[k].isNull()) continue;
+    rows[at].slot[n] = (uint8_t)slot;
+    rows[at].px[n] = px[k].as<float>();
     float bar = 0;
-    if (n < (int)vl.size()) bar = vl[n].as<float>();
+    if (k < (int)vl.size() && !vl[k].isNull()) bar = vl[k].as<float>();
     rows[at].vl[n] = bar < 0 ? 0 : bar;
     n++;
   }

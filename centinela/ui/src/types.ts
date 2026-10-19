@@ -130,6 +130,7 @@ export type Position = {
   fair_fmt: string | null;
   fair_delta_pct: number | null;
   fair_delta_fmt: string;
+  tape_level: number | null;
   price: number | null;
   price_fmt: string;
   change_pct: number | null;

@@ -207,6 +207,7 @@ ensureColumn("tickers", "category", "category TEXT NOT NULL DEFAULT 'watchlist'"
 ensureColumn("tickers", "invested_usd", "invested_usd REAL NOT NULL DEFAULT 0");
 ensureColumn("tickers", "shares", "shares REAL NOT NULL DEFAULT 0");
 ensureColumn("tickers", "fair_price", "fair_price REAL");
+ensureColumn("tickers", "tape_level", "tape_level REAL");
 ensureColumn("tickers", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0");
 ensureColumn("quotes", "ma50", "ma50 REAL");
 ensureColumn("quotes", "ma100", "ma100 REAL");

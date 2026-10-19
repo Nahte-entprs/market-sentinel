@@ -129,6 +129,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
   const [confirm, setConfirm] = useState<string | null>(null);
   const [fairDraft, setFairDraft] = useState("");
   const [sharesDraft, setSharesDraft] = useState("");
+  const [levelDraft, setLevelDraft] = useState("");
   const holdTimer = useRef<number | null>(null);
   const held = useRef(false);
   const [folded, setFolded] = useState<Record<Category, boolean>>(readFolded);
@@ -164,11 +165,16 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
     try {
       const fair = fairDraft.trim() === "" ? (p.fair ?? 0) : Number(fairDraft);
       const shares = sharesDraft.trim() === "" ? p.shares : Number(sharesDraft);
+      const levelRaw = levelDraft.trim();
+      const levelNum = levelRaw === "" ? 0 : Number(levelRaw);
       await post("api/tickers", {
         symbol: p.symbol,
         category: p.category,
         fairPrice: Number.isFinite(fair) ? fair : p.fair ?? 0,
         shares: Number.isFinite(shares) ? shares : p.shares,
+        ...(p.category === "live"
+          ? { tapeLevel: Number.isFinite(levelNum) && levelNum > 0 ? levelNum : 0 }
+          : {}),
       });
       setOpen(null);
       await onReload();
@@ -226,6 +232,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
     setOpen(p.symbol);
     setFairDraft(p.fair != null ? String(p.fair) : "");
     setSharesDraft(p.shares ? String(p.shares) : "");
+    setLevelDraft(p.tape_level != null && p.tape_level > 0 ? String(p.tape_level) : "");
   }
 
   function list(cat: Category): Position[] {
@@ -286,7 +293,7 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                     : cat === "temporal"
                       ? "Pico de Reddit · sale al enfriarse"
                       : cat === "live"
-                        ? "Precio y volumen en la pantalla"
+                        ? "Precio, volumen y un nivel opcional"
                         : "Orden manual"}
                   {rows.length ? ` · ${rows.length}` : ""}
                 </span>
@@ -366,6 +373,9 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                         </div>
                       </div>
                       <div className="mt-2.5 flex flex-wrap gap-1.5">
+                        {cat === "live" && p.tape_level != null && p.tape_level > 0 ? (
+                          <Chip tone="hot">Nivel {p.tape_level}</Chip>
+                        ) : null}
                         {p.fair_fmt ? (
                           <Chip tone={fairUp ? "expensive" : fairDown ? "cheap" : "neutral"}>
                             Fair {p.fair_fmt} {p.fair_delta_fmt}
@@ -417,6 +427,18 @@ export function Cartera({ state, onReload }: { state: AppState; onReload: () => 
                   </div>
                   {expanded && (
                     <div className="px-3 pb-3 space-y-2 border-t border-ha-border">
+                      {cat === "live" ? (
+                        <label className="block text-[11px] text-ha-muted">
+                          Nivel de compra o venta
+                          <input
+                            value={levelDraft}
+                            onChange={(e) => setLevelDraft(e.target.value)}
+                            inputMode="decimal"
+                            placeholder="Vacío no se compara"
+                            className="mt-1 w-full rounded-lg bg-ha-input border border-ha-border px-2 py-2 text-sm"
+                          />
+                        </label>
+                      ) : null}
                       <div className="grid grid-cols-2 gap-2">
                         <label className="text-[11px] text-ha-muted">
                           Fair

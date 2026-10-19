@@ -59,6 +59,7 @@ export function buildApi() {
       category?: string;
       shares?: number;
       fairPrice?: number;
+      tapeLevel?: number | null;
     }>();
     try {
       const symbol = upsertTicker({
@@ -66,6 +67,7 @@ export function buildApi() {
         category: parseCategory(body.category),
         shares: body.shares,
         fairPrice: body.fairPrice,
+        tapeLevel: body.tapeLevel,
       });
       drafts.ticker = "";
       publishCarteraState();

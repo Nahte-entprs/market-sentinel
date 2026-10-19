@@ -57,7 +57,7 @@ static RxCallbacks rx_cb;
 
 void ble_begin() {
   line_asm_reset(assembler);
-  lines = xQueueCreate(4, LINE_ASM_CAP);
+  lines = xQueueCreate(2, LINE_ASM_CAP);
   NimBLEDevice::init(BLE_NAME);
   NimBLEDevice::setMTU(517);
   NimBLEDevice::setPower(9);

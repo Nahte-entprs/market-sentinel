@@ -2,7 +2,7 @@ import { db, getMeta, nowIso, setMeta } from "./db.ts";
 import { isRth } from "./config.ts";
 import { listTickers } from "./universe.ts";
 import type { QuoteSnap } from "./types.ts";
-import { nyDay, nyParts, PROFILE_SLOTS, volumeCurve, volumeSignal, type VolumeSignal } from "./volume.ts";
+import { nyDay, PROFILE_SLOTS, volumeCurve, volumeSignal, type VolumeSignal } from "./volume.ts";
 import { fetchCnbcDaily, fetchCnbcIntraday, fetchCnbcQuotes, type CnbcQuote } from "./cnbc.ts";
 import { discardBody } from "./http.ts";
 import { setPhase, stillRunning } from "./pulse.ts";
@@ -386,37 +386,26 @@ export function symbolsToRenew(): QuoteGaps {
   return { missing, stale, noCurve };
 }
 
-/** Curva habitual de 14 días. Si la tabla está vacía y ya hay velas de 5 min, la calcula y la guarda. */
-function thinSeries<T>(items: T[], max: number): T[] {
-  if (items.length <= max) return items;
-  const out: T[] = [];
-  const last = items.length - 1;
-  for (let i = 0; i < max; i++) out.push(items[Math.round((i * last) / (max - 1))]);
-  return out;
-}
+const TAPE_WINDOW_MS = 8 * 3600_000;
 
-const TAPE_OPEN_MIN = 4 * 60;
-const TAPE_CLOSE_MIN = 20 * 60;
-
-/** Día más reciente con velas, de 4:00 a 20:00 ET. Incluye preapertura y after-hours. */
-export function readSessionSeries(symbol: string): { close: number; volume: number }[] {
-  const cutoff = new Date(Date.now() - 30 * 86400_000).toISOString();
+/** Velas de los últimos 8 horas, en orden. La pantalla las coloca en ese eje. */
+export function readSessionSeries(symbol: string): { ms: number; close: number; volume: number }[] {
+  const until = Date.now();
+  const since = new Date(until - TAPE_WINDOW_MS).toISOString();
   const bars = db
     .prepare("SELECT ts, close, volume FROM quote_intraday WHERE symbol = ? AND ts >= ? AND close > 0 ORDER BY ts ASC")
-    .all(symbol, cutoff) as { ts: string; close: number; volume: number }[];
-  const byDate = new Map<string, { close: number; volume: number }[]>();
+    .all(symbol, since) as { ts: string; close: number; volume: number }[];
+  const out: { ms: number; close: number; volume: number }[] = [];
   for (const bar of bars) {
     const ms = Date.parse(bar.ts);
-    if (!Number.isFinite(ms)) continue;
-    const ny = nyParts(ms);
-    if (ny.minutes < TAPE_OPEN_MIN || ny.minutes >= TAPE_CLOSE_MIN) continue;
-    const list = byDate.get(ny.date) ?? [];
-    list.push({ close: Math.round(bar.close * 100) / 100, volume: Math.max(0, Math.round(bar.volume)) });
-    byDate.set(ny.date, list);
+    if (!Number.isFinite(ms) || ms < until - TAPE_WINDOW_MS || ms > until) continue;
+    out.push({
+      ms,
+      close: Math.round(bar.close * 100) / 100,
+      volume: Math.max(0, Math.round(bar.volume)),
+    });
   }
-  const latest = [...byDate.keys()].sort().at(-1);
-  if (!latest) return [];
-  return thinSeries(byDate.get(latest) ?? [], 48);
+  return out;
 }
 
 export type LiveTapeQuote = { price: number; changePct: number; volume: number; extended: boolean };

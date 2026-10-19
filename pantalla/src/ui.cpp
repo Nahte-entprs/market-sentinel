@@ -63,6 +63,90 @@ static void style_chart(lv_obj_t *chart) {
   lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_X, 0, 0, 0, 0, false, 0);
 }
 
+static int32_t axis_t0 = 0;
+static int32_t axis_t1 = 0;
+
+static void format_clock(int32_t unix_sec, char *out, size_t n, bool seconds) {
+  int64_t local = (int64_t)unix_sec + (int64_t)TZ_OFFSET_MIN * 60;
+  int sod = (int)(local % 86400);
+  if (sod < 0) sod += 86400;
+  int hh = sod / 3600;
+  int mm = (sod % 3600) / 60;
+  int ss = sod % 60;
+  if (seconds) snprintf(out, n, "%d:%02d:%02d", hh, mm, ss);
+  else snprintf(out, n, "%d:%02d", hh, mm);
+}
+
+static int text_px(const char *s) { return (int)strlen(s) * 8; }
+
+static void on_price_draw(lv_event_t *e) {
+  if (axis_t1 <= axis_t0) return;
+  lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+  if (!ctx) return;
+  lv_area_t a;
+  lv_obj_get_coords(lv_event_get_target(e), &a);
+  int width = (int)(a.x2 - a.x1);
+  if (width < 8) return;
+  int64_t local0 = (int64_t)axis_t0 + (int64_t)TZ_OFFSET_MIN * 60;
+  int64_t local1 = (int64_t)axis_t1 + (int64_t)TZ_OFFSET_MIN * 60;
+  int64_t span = local1 - local0;
+  if (span <= 0) return;
+  int64_t rem = ((local0 % 1800) + 1800) % 1800;
+  int64_t mark = rem == 0 ? local0 : local0 + (1800 - rem);
+  lv_draw_line_dsc_t dsc;
+  lv_draw_line_dsc_init(&dsc);
+  dsc.color = lv_color_hex(0xC6A15B);
+  dsc.width = 1;
+  dsc.opa = LV_OPA_30;
+  for (; mark < local1; mark += 1800) {
+    int x = (int)(a.x1 + (mark - local0) * width / span);
+    if (x <= (int)a.x1 + 1 || x >= (int)a.x2 - 1) continue;
+    lv_point_t p1 = {(lv_coord_t)x, (lv_coord_t)(a.y1 + 1)};
+    lv_point_t p2 = {(lv_coord_t)x, (lv_coord_t)(a.y2 - 1)};
+    lv_draw_line(ctx, &dsc, &p1, &p2);
+  }
+}
+
+static void paint_times() {
+  lv_obj_t *row = lv_obj_create(list);
+  lv_obj_set_width(row, lv_pct(100));
+  lv_obj_set_height(row, 16);
+  lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(row, 0, 0);
+  lv_obj_set_style_pad_all(row, 0, 0);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  if (axis_t1 <= axis_t0) return;
+  const int width = SCREEN_W - 16;
+  int64_t local0 = (int64_t)axis_t0 + (int64_t)TZ_OFFSET_MIN * 60;
+  int64_t local1 = (int64_t)axis_t1 + (int64_t)TZ_OFFSET_MIN * 60;
+  int64_t span = local1 - local0;
+  if (span <= 0) return;
+  char now[12];
+  format_clock(axis_t1, now, sizeof now, true);
+  int now_left = width - text_px(now);
+
+  int64_t rem = ((local0 % 1800) + 1800) % 1800;
+  int64_t mark = rem == 0 ? local0 : local0 + (1800 - rem);
+  for (; mark < local1; mark += 1800) {
+    char text[8];
+    format_clock((int32_t)(mark - (int64_t)TZ_OFFSET_MIN * 60), text, sizeof text, false);
+    int tw = text_px(text);
+    int x = (int)((mark - local0) * width / span) - tw / 2;
+    if (x < 0) x = 0;
+    if (x + tw > now_left - 2) continue;
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, text);
+    lv_obj_set_style_text_font(lbl, &font_latin_14, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0x6E7464), 0);
+    lv_obj_set_pos(lbl, x, 0);
+  }
+  lv_obj_t *live = lv_label_create(row);
+  lv_label_set_text(live, now);
+  lv_obj_set_style_text_font(live, &font_latin_14, 0);
+  lv_obj_set_style_text_color(live, lv_color_hex(0xF2F0E6), 0);
+  lv_obj_set_pos(live, now_left, 0);
+}
+
 static void paint_live(const TapeRow *q) {
   bool up = q->change[0] == '+';
   bool down = q->change[0] == '-';
@@ -70,32 +154,60 @@ static void paint_live(const TapeRow *q) {
 
   lv_obj_t *head = lv_obj_create(list);
   lv_obj_set_width(head, lv_pct(100));
-  lv_obj_set_height(head, 36);
+  lv_obj_set_height(head, q->level > 0 ? 52 : 36);
   lv_obj_set_style_bg_opa(head, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(head, 0, 0);
   lv_obj_set_style_pad_all(head, 0, 0);
-  lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_row(head, 0, 0);
+  lv_obj_set_flex_flow(head, LV_FLEX_FLOW_COLUMN);
   lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_t *sym = lv_label_create(head);
+  lv_obj_t *top = lv_obj_create(head);
+  lv_obj_set_width(top, lv_pct(100));
+  lv_obj_set_height(top, 28);
+  lv_obj_set_style_bg_opa(top, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(top, 0, 0);
+  lv_obj_set_style_pad_all(top, 0, 0);
+  lv_obj_set_flex_flow(top, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(top, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *sym = lv_label_create(top);
   lv_label_set_text(sym, q->symbol);
   lv_obj_set_style_text_font(sym, &font_latin_18, 0);
   lv_obj_set_style_text_color(sym, lv_color_hex(0xF2F0E6), 0);
 
   char summary[48];
   snprintf(summary, sizeof summary, "%s  %s", q->price[0] ? q->price : "n/d", q->change[0] ? q->change : "—");
-  lv_obj_t *px = lv_label_create(head);
+  lv_obj_t *px = lv_label_create(top);
   lv_label_set_text(px, summary);
   lv_obj_set_style_text_font(px, &font_latin_16, 0);
   lv_obj_set_style_text_color(px, ink, 0);
 
   char vol[24];
   snprintf(vol, sizeof vol, "vol %s", q->volume[0] ? q->volume : "n/d");
-  lv_obj_t *vlab = lv_label_create(head);
+  lv_obj_t *vlab = lv_label_create(top);
   lv_label_set_text(vlab, vol);
   lv_obj_set_style_text_font(vlab, &font_latin_14, 0);
   lv_obj_set_style_text_color(vlab, lv_color_hex(0xE8D7A8), 0);
+
+  if (q->level > 0) {
+    float cur = 0;
+    int best = -1;
+    for (int i = 0; i < q->n; i++) {
+      if ((int)q->slot[i] >= best) {
+        best = q->slot[i];
+        cur = q->px[i];
+      }
+    }
+    float pct = (cur - q->level) / q->level * 100.f;
+    char extra[40];
+    snprintf(extra, sizeof extra, "nivel %.2f  %+.1f%%", q->level, pct);
+    lv_obj_t *nl = lv_label_create(head);
+    lv_label_set_text(nl, extra);
+    lv_obj_set_style_text_font(nl, &font_latin_14, 0);
+    lv_obj_set_style_text_color(nl, lv_color_hex(0xE0A100), 0);
+  }
 
   if (q->n < 2) {
     lv_obj_t *empty = lv_label_create(list);
@@ -112,17 +224,37 @@ static void paint_live(const TapeRow *q) {
     if (q->px[i] > phi) phi = q->px[i];
     if (q->vl[i] > vhi) vhi = q->vl[i];
   }
+  if (q->level > 0) {
+    if (q->level < plo) plo = q->level;
+    if (q->level > phi) phi = q->level;
+  }
+  float span = phi - plo;
+  if (!(span > 0)) span = plo > 0 ? plo * 0.01f : 1;
+  plo -= span * 0.05f;
+  phi += span * 0.05f;
+
+  axis_t0 = q->t0;
+  axis_t1 = q->t1 > q->t0 ? q->t1 : q->t0 + 8 * 3600;
 
   lv_obj_t *price = lv_chart_create(list);
   lv_obj_set_width(price, lv_pct(100));
   lv_obj_set_flex_grow(price, 1);
   lv_obj_set_height(price, 0);
   style_chart(price);
+  lv_obj_add_event_cb(price, on_price_draw, LV_EVENT_DRAW_POST, nullptr);
   lv_chart_set_type(price, LV_CHART_TYPE_LINE);
-  lv_chart_set_point_count(price, q->n);
+  lv_chart_set_point_count(price, TAPE_SLOTS);
   lv_chart_set_range(price, LV_CHART_AXIS_PRIMARY_Y, 0, 1000);
+  if (q->level > 0) {
+    lv_chart_series_t *ls = lv_chart_add_series(price, lv_color_hex(0xE0A100), LV_CHART_AXIS_PRIMARY_Y);
+    lv_chart_set_all_value(price, ls, scale_point(q->level, plo, phi));
+  }
   lv_chart_series_t *ps = lv_chart_add_series(price, ink, LV_CHART_AXIS_PRIMARY_Y);
-  for (int i = 0; i < q->n; i++) lv_chart_set_next_value(price, ps, scale_point(q->px[i], plo, phi));
+  lv_chart_set_all_value(price, ps, LV_CHART_POINT_NONE);
+  for (int i = 0; i < q->n; i++) {
+    lv_chart_set_value_by_id(price, ps, q->slot[i], scale_point(q->px[i], plo, phi));
+  }
+  paint_times();
 
   lv_obj_t *caption = lv_label_create(list);
   lv_label_set_text(caption, "Volumen de la sesión");
@@ -134,10 +266,14 @@ static void paint_live(const TapeRow *q) {
   lv_obj_set_height(bars, 72);
   style_chart(bars);
   lv_chart_set_type(bars, LV_CHART_TYPE_BAR);
-  lv_chart_set_point_count(bars, q->n);
+  lv_chart_set_point_count(bars, TAPE_SLOTS);
   lv_chart_set_range(bars, LV_CHART_AXIS_PRIMARY_Y, 0, 1000);
   lv_chart_series_t *vs = lv_chart_add_series(bars, lv_color_hex(0xE0A100), LV_CHART_AXIS_PRIMARY_Y);
-  for (int i = 0; i < q->n; i++) lv_chart_set_next_value(bars, vs, scale_point(q->vl[i], 0, vhi));
+  lv_chart_set_all_value(bars, vs, LV_CHART_POINT_NONE);
+  for (int i = 0; i < q->n; i++) {
+    if (!(q->vl[i] > 0)) continue;
+    lv_chart_set_value_by_id(bars, vs, q->slot[i], scale_point(q->vl[i], 0, vhi));
+  }
 }
 
 static void style_filters() {
