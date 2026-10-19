@@ -44,63 +44,100 @@ static const char *section_name(const char *section) {
   return "Radar";
 }
 
-static void paint_quote(const TapeRow *q) {
-  lv_obj_t *card = lv_obj_create(list);
-  lv_obj_set_width(card, lv_pct(100));
-  lv_obj_set_height(card, LV_SIZE_CONTENT);
-  lv_obj_set_style_bg_color(card, lv_color_hex(0x1C2118), 0);
-  lv_obj_set_style_radius(card, 10, 0);
-  lv_obj_set_style_pad_all(card, 8, 0);
-  lv_obj_set_style_pad_left(card, 12, 0);
-  lv_obj_set_style_border_side(card, LV_BORDER_SIDE_LEFT, 0);
-  lv_obj_set_style_border_width(card, 4, 0);
-  lv_obj_set_style_border_color(card, lv_color_hex(0xCE93D8), 0);
-  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(card, 2, 0);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+static lv_coord_t scale_point(float v, float lo, float hi) {
+  if (!(hi > lo)) return 500;
+  float t = (v - lo) / (hi - lo);
+  if (t < 0) t = 0;
+  if (t > 1) t = 1;
+  return (lv_coord_t)(t * 1000.0f);
+}
 
-  lv_obj_t *row = lv_obj_create(card);
-  lv_obj_set_width(row, lv_pct(100));
-  lv_obj_set_height(row, LV_SIZE_CONTENT);
-  lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(row, 0, 0);
-  lv_obj_set_style_pad_all(row, 0, 0);
-  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+static void style_chart(lv_obj_t *chart) {
+  lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(chart, 0, 0);
+  lv_obj_set_style_pad_all(chart, 0, 0);
+  lv_obj_set_style_size(chart, 0, LV_PART_INDICATOR);
+  lv_obj_set_style_line_width(chart, 2, LV_PART_ITEMS);
+  lv_chart_set_div_line_count(chart, 2, 0);
+  lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_Y, 0, 0, 0, 0, false, 0);
+  lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_X, 0, 0, 0, 0, false, 0);
+}
 
-  lv_obj_t *sym = lv_label_create(row);
+static void paint_live(const TapeRow *q) {
+  bool up = q->change[0] == '+';
+  bool down = q->change[0] == '-';
+  lv_color_t ink = up ? lv_color_hex(0x3DDC97) : down ? lv_color_hex(0xFF6B6B) : lv_color_hex(0xF2F0E6);
+
+  lv_obj_t *head = lv_obj_create(list);
+  lv_obj_set_width(head, lv_pct(100));
+  lv_obj_set_height(head, 36);
+  lv_obj_set_style_bg_opa(head, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(head, 0, 0);
+  lv_obj_set_style_pad_all(head, 0, 0);
+  lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *sym = lv_label_create(head);
   lv_label_set_text(sym, q->symbol);
   lv_obj_set_style_text_font(sym, &font_latin_18, 0);
   lv_obj_set_style_text_color(sym, lv_color_hex(0xF2F0E6), 0);
 
-  lv_obj_t *px = lv_label_create(row);
-  lv_label_set_text(px, q->price[0] ? q->price : "n/d");
-  lv_obj_set_style_text_font(px, &font_latin_18, 0);
-
-  lv_obj_t *meta = lv_obj_create(card);
-  lv_obj_set_width(meta, lv_pct(100));
-  lv_obj_set_height(meta, LV_SIZE_CONTENT);
-  lv_obj_set_style_bg_opa(meta, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(meta, 0, 0);
-  lv_obj_set_style_pad_all(meta, 0, 0);
-  lv_obj_set_flex_flow(meta, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(meta, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_clear_flag(meta, LV_OBJ_FLAG_SCROLLABLE);
-
-  bool up = q->change[0] == '+';
-  bool down = q->change[0] == '-';
-  lv_obj_t *chg = lv_label_create(meta);
-  lv_label_set_text(chg, q->change[0] ? q->change : "—");
-  lv_obj_set_style_text_font(chg, &font_latin_14, 0);
-  lv_obj_set_style_text_color(chg, up ? lv_color_hex(0x3DDC97) : down ? lv_color_hex(0xFF6B6B) : lv_color_hex(0x9AA392), 0);
+  char summary[48];
+  snprintf(summary, sizeof summary, "%s  %s", q->price[0] ? q->price : "n/d", q->change[0] ? q->change : "—");
+  lv_obj_t *px = lv_label_create(head);
+  lv_label_set_text(px, summary);
+  lv_obj_set_style_text_font(px, &font_latin_16, 0);
+  lv_obj_set_style_text_color(px, ink, 0);
 
   char vol[24];
   snprintf(vol, sizeof vol, "vol %s", q->volume[0] ? q->volume : "n/d");
-  lv_obj_t *v = lv_label_create(meta);
-  lv_label_set_text(v, vol);
-  lv_obj_set_style_text_font(v, &font_latin_14, 0);
-  lv_obj_set_style_text_color(v, lv_color_hex(0xE8D7A8), 0);
+  lv_obj_t *vlab = lv_label_create(head);
+  lv_label_set_text(vlab, vol);
+  lv_obj_set_style_text_font(vlab, &font_latin_14, 0);
+  lv_obj_set_style_text_color(vlab, lv_color_hex(0xE8D7A8), 0);
+
+  if (q->n < 2) {
+    lv_obj_t *empty = lv_label_create(list);
+    lv_label_set_text(empty, "Sin curva todavía");
+    lv_obj_set_style_text_color(empty, lv_color_hex(0x9AA392), 0);
+    return;
+  }
+
+  float plo = q->px[0];
+  float phi = q->px[0];
+  float vhi = 0;
+  for (int i = 0; i < q->n; i++) {
+    if (q->px[i] < plo) plo = q->px[i];
+    if (q->px[i] > phi) phi = q->px[i];
+    if (q->vl[i] > vhi) vhi = q->vl[i];
+  }
+
+  lv_obj_t *price = lv_chart_create(list);
+  lv_obj_set_width(price, lv_pct(100));
+  lv_obj_set_flex_grow(price, 1);
+  lv_obj_set_height(price, 0);
+  style_chart(price);
+  lv_chart_set_type(price, LV_CHART_TYPE_LINE);
+  lv_chart_set_point_count(price, q->n);
+  lv_chart_set_range(price, LV_CHART_AXIS_PRIMARY_Y, 0, 1000);
+  lv_chart_series_t *ps = lv_chart_add_series(price, ink, LV_CHART_AXIS_PRIMARY_Y);
+  for (int i = 0; i < q->n; i++) lv_chart_set_next_value(price, ps, scale_point(q->px[i], plo, phi));
+
+  lv_obj_t *caption = lv_label_create(list);
+  lv_label_set_text(caption, "Volumen de la sesión");
+  lv_obj_set_style_text_font(caption, &font_latin_14, 0);
+  lv_obj_set_style_text_color(caption, lv_color_hex(0x9AA392), 0);
+
+  lv_obj_t *bars = lv_chart_create(list);
+  lv_obj_set_width(bars, lv_pct(100));
+  lv_obj_set_height(bars, 72);
+  style_chart(bars);
+  lv_chart_set_type(bars, LV_CHART_TYPE_BAR);
+  lv_chart_set_point_count(bars, q->n);
+  lv_chart_set_range(bars, LV_CHART_AXIS_PRIMARY_Y, 0, 1000);
+  lv_chart_series_t *vs = lv_chart_add_series(bars, lv_color_hex(0xE0A100), LV_CHART_AXIS_PRIMARY_Y);
+  for (int i = 0; i < q->n; i++) lv_chart_set_next_value(bars, vs, scale_point(q->vl[i], 0, vhi));
 }
 
 static void style_filters() {
@@ -204,12 +241,14 @@ static void rebuild() {
   bool detail_open = detail && !lv_obj_has_flag(detail, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clean(list);
   if (strcmp(FILTER_ID[filter], "live") == 0) {
-    if (!tape_count()) {
+    lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+    const TapeRow *q = tape_count() ? tape_at(0) : nullptr;
+    if (!q) {
       lv_obj_t *empty = lv_label_create(list);
       lv_label_set_text(empty, "Nada en tiempo real");
       lv_obj_set_style_text_color(empty, lv_color_hex(0x9AA392), 0);
     } else {
-      for (int i = 0; i < tape_count(); i++) paint_quote(tape_at(i));
+      paint_live(q);
     }
     int unread = store_unread();
     if (unread_label) lv_label_set_text_fmt(unread_label, unread ? "%d" : "al día", unread);
@@ -217,6 +256,7 @@ static void rebuild() {
     dirty = false;
     return;
   }
+  lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
   const char *want = FILTER_ID[filter];
   int shown = 0;
   for (int i = 0; i < store_count(); i++) {

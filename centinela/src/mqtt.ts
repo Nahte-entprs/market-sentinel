@@ -456,7 +456,7 @@ export function publishWatchlist(symbols: string[]) {
   pub(`${PREFIX}/sensor/watchlist_attr`, { tickers: symbols });
 }
 
-export function publishTape(rows: { s: string; p: string; c: string; v: string }[]) {
+export function publishTape(rows: { s: string; p: string; c: string; v: string; px?: number[]; vl?: number[] }[]) {
   pub(`${PREFIX}/tape`, { n: rows.length, rows }, true);
 }
 

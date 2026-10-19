@@ -37,6 +37,17 @@ export type CnbcQuote = {
   prevClose: number;
   volume: number;
   avgVolume: number;
+  /** Precio de preapertura o after-hours. En regular estos campos no vienen. */
+  extPrice?: number;
+  extChangePct?: number;
+  extVolume?: number;
+  extStatus?: "PRE_MKT" | "POST_MKT";
+};
+
+type ExtQuote = {
+  last?: string;
+  change_pct?: string;
+  volume?: string;
 };
 
 type FormattedQuote = {
@@ -47,6 +58,8 @@ type FormattedQuote = {
   change_pct?: string;
   volume?: string;
   tendayavgvol?: string;
+  curmktstatus?: string;
+  ExtendedMktQuote?: ExtQuote;
 };
 
 export async function fetchCnbcQuotes(symbols: string[]): Promise<{ quotes: CnbcQuote[]; missing: string[]; error?: string }> {
@@ -83,14 +96,26 @@ export async function fetchCnbcQuotes(symbols: string[]): Promise<{ quotes: Cnbc
         const changePct = parseCnbcNumber(row.change_pct);
         if (!(price > 0) || !Number.isFinite(changePct)) continue;
         const prevClose = price - (Number.isFinite(change) ? change : 0);
-        quotes.push({
+        const quote: CnbcQuote = {
           symbol: ours,
           price,
           changePct,
           prevClose: prevClose > 0 ? prevClose : price,
           volume: Number.isFinite(parseCnbcNumber(row.volume)) ? parseCnbcNumber(row.volume) : 0,
           avgVolume: Number.isFinite(parseCnbcNumber(row.tendayavgvol)) ? parseCnbcNumber(row.tendayavgvol) : 0,
-        });
+        };
+        const status = row.curmktstatus;
+        const ext = row.ExtendedMktQuote;
+        const extPrice = parseCnbcNumber(ext?.last);
+        const extPct = parseCnbcNumber(ext?.change_pct);
+        if ((status === "PRE_MKT" || status === "POST_MKT") && extPrice > 0 && Number.isFinite(extPct)) {
+          quote.extPrice = extPrice;
+          quote.extChangePct = extPct;
+          const extVol = parseCnbcNumber(ext?.volume);
+          quote.extVolume = Number.isFinite(extVol) && extVol > 0 ? extVol : 0;
+          quote.extStatus = status;
+        }
+        quotes.push(quote);
         seen.add(ours);
       }
     } catch (err) {

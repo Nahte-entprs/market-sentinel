@@ -1,5 +1,8 @@
 #include "store.h"
 
+#include "config.h"
+#include "textutil.h"
+
 #include <LittleFS.h>
 #include <string.h>
 
@@ -17,36 +20,6 @@ struct FileHeader {
   uint32_t count;
   uint32_t next_id;
 };
-
-static void seed_one(const char *section, const char *title, const char *message, const char *at) {
-  if (count >= NOTICE_CAP) return;
-  Notice &n = items[count++];
-  memset(&n, 0, sizeof n);
-  n.id = next_id++;
-  n.unread = 1;
-  n.demo = 1;
-  strncpy(n.section, section, sizeof n.section - 1);
-  strncpy(n.title, title, sizeof n.title - 1);
-  strncpy(n.message, message, sizeof n.message - 1);
-  strncpy(n.at, at, sizeof n.at - 1);
-}
-
-static void seed_demos() {
-  count = 0;
-  next_id = 10;
-  seed_one("radar", "Régimen en observación",
-           "El radar no marca crisis. Este aviso de prueba vive en la placa hasta que llegue uno real.",
-           "2026-10-09T15:00:00-03:00");
-  seed_one("cartera", "NVDA volumen",
-           "Volumen 5m por encima de lo habitual.",
-           "2026-10-09T15:04:00-03:00");
-  seed_one("reddit", "Reddit · NVDA, AMD",
-           "NVDA: 120 en 24h, 18 la última hora. Aviso de prueba.",
-           "2026-10-09T15:08:00-03:00");
-  seed_one("ideas", "Tesis de semiconductores",
-           "Un claim de prueba para ver la tarjeta completa al tocarla.",
-           "2026-10-09T15:12:00-03:00");
-}
 
 static bool persist() {
   if (!fs_ok) return true;
@@ -82,12 +55,36 @@ static bool load() {
   return true;
 }
 
+bool store_prune(int64_t now_epoch) {
+  int64_t newest = now_epoch > 0 ? now_epoch : 0;
+  for (uint16_t i = 0; i < count; i++) {
+    if (items[i].demo) continue;
+    int64_t at = 0;
+    if (parse_iso_epoch(items[i].at, &at) && at > newest) newest = at;
+  }
+  const int64_t cutoff = newest > 0 ? newest - (int64_t)NOTICE_KEEP_SEC : 0;
+  uint16_t w = 0;
+  bool changed = false;
+  for (uint16_t i = 0; i < count; i++) {
+    int64_t at = 0;
+    bool keep = !items[i].demo && parse_iso_epoch(items[i].at, &at) && newest > 0 && at >= cutoff;
+    if (!keep) {
+      changed = true;
+      continue;
+    }
+    if (w != i) items[w] = items[i];
+    w++;
+  }
+  if (!changed) return false;
+  count = w;
+  persist();
+  return true;
+}
+
 bool store_begin() {
   fs_ok = LittleFS.begin(true, "/littlefs", 10, "spiffs");
-  if (!fs_ok || !load() || count == 0) {
-    seed_demos();
-    persist();
-  }
+  if (fs_ok) load();
+  store_prune(0);
   return fs_ok;
 }
 

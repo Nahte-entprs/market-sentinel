@@ -83,3 +83,45 @@ bool format_hhmm(const char *iso, int tz_offset_min, char out[8]) {
   snprintf(out, 8, "%02d:%02d", total / 60, total % 60);
   return true;
 }
+
+static int64_t days_from_civil(int y, unsigned m, unsigned d) {
+  y -= m <= 2;
+  const int era = (y >= 0 ? y : y - 399) / 400;
+  const unsigned yoe = (unsigned)(y - era * 400);
+  const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return (int64_t)era * 146097 + (int64_t)doe - 719468;
+}
+
+bool parse_iso_epoch(const char *iso, int64_t *out) {
+  if (!iso || !out) return false;
+  int y = 0;
+  int mo = 0;
+  int d = 0;
+  int hh = 0;
+  int mm = 0;
+  int ss = 0;
+  if (!read_n(iso, 4, &y) || iso[4] != '-' || !read_n(iso + 5, 2, &mo) || iso[7] != '-' || !read_n(iso + 8, 2, &d)) return false;
+  if (iso[10] != 'T' || !read_n(iso + 11, 2, &hh) || iso[13] != ':' || !read_n(iso + 14, 2, &mm)) return false;
+  if (iso[16] != ':' || !read_n(iso + 17, 2, &ss)) return false;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || hh > 23 || mm > 59 || ss > 60) return false;
+  const char *p = iso + 19;
+  if (*p == '.') {
+    p++;
+    while (*p >= '0' && *p <= '9') p++;
+  }
+  int off = 0;
+  if (*p == 'Z') {
+    off = 0;
+  } else if (*p == '+' || *p == '-') {
+    int sign = (*p == '+') ? 1 : -1;
+    int oh = 0;
+    int om = 0;
+    if (p[3] != ':' || !read_n(p + 1, 2, &oh) || !read_n(p + 4, 2, &om)) return false;
+    off = sign * (oh * 60 + om);
+  } else {
+    return false;
+  }
+  *out = days_from_civil(y, (unsigned)mo, (unsigned)d) * 86400 + hh * 3600 + mm * 60 + ss - (int64_t)off * 60;
+  return true;
+}

@@ -41,7 +41,7 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
     size_t n = value.size();
     size_t off = 0;
     while (off < n) {
-      char line[LINE_ASM_CAP];
+      static char line[LINE_ASM_CAP];
       size_t used = 0;
       bool got = line_asm_push(assembler, data + off, n - off, used, line, sizeof line);
       if (used == 0) break;
@@ -81,11 +81,9 @@ void ble_begin() {
 bool ble_connected() { return connected; }
 
 bool ble_take_line(char *out, size_t cap) {
-  if (!lines || cap == 0) return false;
-  char tmp[LINE_ASM_CAP];
-  if (xQueueReceive(lines, tmp, 0) != pdTRUE) return false;
-  strncpy(out, tmp, cap - 1);
-  out[cap - 1] = 0;
+  if (!lines || !out || cap < LINE_ASM_CAP) return false;
+  if (xQueueReceive(lines, out, 0) != pdTRUE) return false;
+  out[LINE_ASM_CAP - 1] = 0;
   return true;
 }
 

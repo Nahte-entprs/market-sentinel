@@ -1,5 +1,5 @@
 import { db, json, nowIso, parseJson, getSetting, getMeta, setMeta } from "./db.ts";
-import { isRth } from "./config.ts";
+import { isExtendedHours, isRth } from "./config.ts";
 import { listFactors, listIdeas, listTickers, listTickersByCategory } from "./universe.ts";
 import { syncTemporalCartera } from "./temporal.ts";
 import { allQuoteSymbols, allQuotes, getQuote, needsDailyBars, readVolumeSignal, refreshFromCnbc, refreshCnbcCurve, refreshCnbcDaily, refreshFundamentals, refreshSymbolSoon, symbolsToRenew, threeDayTrend } from "./quotes.ts";
@@ -736,6 +736,11 @@ async function tapeJob() {
   }
   setPhase("cinta");
   const r = await refreshFromCnbc(symbols);
+  try {
+    await refreshCnbcCurve(symbols[0]);
+  } catch (err) {
+    console.error(`[cinta] ${symbols[0]} curva: ${(err as Error).message}`);
+  }
   publishCarteraState();
   if (r.ok === 0 && (r.error || r.missing.length)) throw new Error(r.error || r.missing[0] || "CNBC sin precios");
   return `${r.ok} precios`;
@@ -743,7 +748,7 @@ async function tapeJob() {
 
 export const JOBS: JobDef[] = [
   { id: "quotes.poll", name: "Cotizaciones", description: "Precio, volumen y medias móviles", cadenceMs: () => (isRth() ? 5 : 15) * 60_000, run: quotesJob },
-  { id: "tape.live", name: "En tiempo real", description: "Precio y volumen de esa cartera, para la pantalla", cadenceMs: () => (isRth() ? 60 : 5 * 60) * 1000, run: tapeJob },
+  { id: "tape.live", name: "En tiempo real", description: "Precio y volumen de esa cartera, para la pantalla", cadenceMs: () => (isExtendedHours() ? 60 : 5 * 60) * 1000, run: tapeJob },
   { id: "fundamentals.poll", name: "Fundamentals", description: "Rating analistas, PT y 52w", cadenceMs: () => 60 * 60_000, run: fundamentalsJob },
   { id: "regime.tick", name: "Régimen", description: "NORMAL → CRISIS", cadenceMs: () => (isRth() ? 5 : 15) * 60_000, run: regimeJob },
   {

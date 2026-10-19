@@ -2,8 +2,8 @@ import { db, getMeta, nowIso, setMeta } from "./db.ts";
 import { isRth } from "./config.ts";
 import { listTickers } from "./universe.ts";
 import type { QuoteSnap } from "./types.ts";
-import { nyDay, PROFILE_SLOTS, volumeCurve, volumeSignal, type VolumeSignal } from "./volume.ts";
-import { fetchCnbcDaily, fetchCnbcIntraday, fetchCnbcQuotes } from "./cnbc.ts";
+import { nyDay, nyParts, PROFILE_SLOTS, volumeCurve, volumeSignal, type VolumeSignal } from "./volume.ts";
+import { fetchCnbcDaily, fetchCnbcIntraday, fetchCnbcQuotes, type CnbcQuote } from "./cnbc.ts";
 import { discardBody } from "./http.ts";
 import { setPhase, stillRunning } from "./pulse.ts";
 
@@ -387,6 +387,61 @@ export function symbolsToRenew(): QuoteGaps {
 }
 
 /** Curva habitual de 14 días. Si la tabla está vacía y ya hay velas de 5 min, la calcula y la guarda. */
+function thinSeries<T>(items: T[], max: number): T[] {
+  if (items.length <= max) return items;
+  const out: T[] = [];
+  const last = items.length - 1;
+  for (let i = 0; i < max; i++) out.push(items[Math.round((i * last) / (max - 1))]);
+  return out;
+}
+
+const TAPE_OPEN_MIN = 4 * 60;
+const TAPE_CLOSE_MIN = 20 * 60;
+
+/** Día más reciente con velas, de 4:00 a 20:00 ET. Incluye preapertura y after-hours. */
+export function readSessionSeries(symbol: string): { close: number; volume: number }[] {
+  const cutoff = new Date(Date.now() - 30 * 86400_000).toISOString();
+  const bars = db
+    .prepare("SELECT ts, close, volume FROM quote_intraday WHERE symbol = ? AND ts >= ? AND close > 0 ORDER BY ts ASC")
+    .all(symbol, cutoff) as { ts: string; close: number; volume: number }[];
+  const byDate = new Map<string, { close: number; volume: number }[]>();
+  for (const bar of bars) {
+    const ms = Date.parse(bar.ts);
+    if (!Number.isFinite(ms)) continue;
+    const ny = nyParts(ms);
+    if (ny.minutes < TAPE_OPEN_MIN || ny.minutes >= TAPE_CLOSE_MIN) continue;
+    const list = byDate.get(ny.date) ?? [];
+    list.push({ close: Math.round(bar.close * 100) / 100, volume: Math.max(0, Math.round(bar.volume)) });
+    byDate.set(ny.date, list);
+  }
+  const latest = [...byDate.keys()].sort().at(-1);
+  if (!latest) return [];
+  return thinSeries(byDate.get(latest) ?? [], 48);
+}
+
+export type LiveTapeQuote = { price: number; changePct: number; volume: number; extended: boolean };
+
+const liveBySymbol = new Map<string, LiveTapeQuote>();
+
+function rememberTape(q: CnbcQuote) {
+  const extended = (q.extStatus === "PRE_MKT" || q.extStatus === "POST_MKT") && (q.extPrice ?? 0) > 0;
+  if (extended) {
+    liveBySymbol.set(q.symbol, {
+      price: q.extPrice ?? q.price,
+      changePct: q.extChangePct ?? q.changePct,
+      volume: q.extVolume ?? 0,
+      extended: true,
+    });
+    return;
+  }
+  liveBySymbol.set(q.symbol, { price: q.price, changePct: q.changePct, volume: q.volume, extended: false });
+}
+
+/** Precio que ve la pantalla. En preapertura no usa el cierre regular. */
+export function liveTapeQuote(symbol: string): LiveTapeQuote | null {
+  return liveBySymbol.get(symbol) ?? null;
+}
+
 export function readVolumeCurve(symbol: string): { avg: number[]; today: number[] } {
   const stored = db
     .prepare("SELECT slot, avg_volume, samples, updated_at FROM volume_profile WHERE symbol = ? ORDER BY slot ASC")
@@ -483,6 +538,7 @@ export async function refreshFromCnbc(symbols: string[], onEach?: () => void): P
       ma100: mas.ma100,
       ma200: mas.ma200,
     });
+    rememberTape(q);
     console.log(`[quote] ${q.symbol} ${q.price.toFixed(2)} ${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(1)}% · CNBC`);
     ok++;
     onEach?.();

@@ -19,6 +19,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import androidx.core.content.ContextCompat
+import java.time.Instant
 import java.util.UUID
 
 @SuppressLint("MissingPermission")
@@ -45,6 +46,7 @@ object BleLink {
     private var retries = 0
     private var scanning = false
     private val quotes = ArrayDeque<String>()
+    private var clockLine: String? = null
 
     private val reconnect = Runnable { connectIfNeeded() }
     private val ackTimeout = Runnable { if (writing) retryOrDrop() }
@@ -101,6 +103,14 @@ object BleLink {
         handler.post {
             quotes.clear()
             quotes.addAll(lines)
+            pump()
+        }
+    }
+
+    fun pushClock() {
+        val line = "{\"op\":\"clock\",\"at\":\"${Instant.now()}\"}\n"
+        handler.post {
+            clockLine = line
             pump()
         }
     }
@@ -321,8 +331,12 @@ object BleLink {
 
     private fun pump() {
         if (!ready || writing) return
-        val next = QueueStore.peek(app)
-        val bytes = if (next != null) {
+        val clock = clockLine
+        val next = if (clock == null) QueueStore.peek(app) else null
+        val bytes = if (clock != null) {
+            clockLine = null
+            clock.toByteArray(Charsets.UTF_8)
+        } else if (next != null) {
             next.jsonLine().toByteArray(Charsets.UTF_8)
         } else {
             val line = quotes.removeFirstOrNull() ?: return
@@ -330,7 +344,7 @@ object BleLink {
         }
         chunks = slice(bytes)
         chunkIndex = 0
-        inflight = next
+        inflight = if (clock != null) null else next
         retries = 0
         writing = true
         writeChunk()

@@ -1,5 +1,5 @@
 import { listTickers, listTickersByCategory } from "./universe.ts";
-import { getQuote, quoteError, readVolumeCurve, readVolumeSignal } from "./quotes.ts";
+import { getQuote, liveTapeQuote, quoteError, readSessionSeries, readVolumeCurve, readVolumeSignal } from "./quotes.ts";
 import { publishCartera, publishTape, publishWatchlist } from "./mqtt.ts";
 import { MIN_SLOT_SAMPLES } from "./volume.ts";
 import { watchBand } from "./settings.ts";
@@ -32,6 +32,14 @@ function recLabel(key: string | null, mean: number | null) {
 function pctFmt(n: number, digits = 1) {
   const sign = n > 0 ? "+" : "";
   return `${sign}${n.toFixed(digits)}%`;
+}
+
+function compactVol(n: number) {
+  if (!(n > 0)) return "";
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(0)}K`;
+  return String(Math.round(n));
 }
 
 function sharesFmt(n: number) {
@@ -151,11 +159,26 @@ export function toPosition(t: TickerRow): CarteraPosition {
 }
 
 export function publishLiveTape() {
-  const rows = listTickersByCategory("live").map((t) => {
+  const tickers = listTickersByCategory("live");
+  const rows = tickers.slice(0, 1).map((t) => {
     const q = getQuote(t.symbol);
-    const change = q && q.changeTrusted ? pctFmt(q.changePct) : "";
-    const vol = q && q.volumeRatio > 0 ? `${q.volumeRatio.toFixed(1)}x` : "";
-    return { s: t.symbol, p: q ? usd(q.price) : "n/d", c: change, v: vol };
+    const live = liveTapeQuote(t.symbol);
+    const price = live?.price ?? q?.price;
+    const changePct = live ? live.changePct : q?.changeTrusted ? q.changePct : null;
+    const vol = live?.extended
+      ? compactVol(live.volume)
+      : q && q.volumeRatio > 0
+        ? `${q.volumeRatio.toFixed(1)}x`
+        : "";
+    const series = readSessionSeries(t.symbol);
+    return {
+      s: t.symbol,
+      p: price ? usd(price) : "n/d",
+      c: changePct == null ? "" : pctFmt(changePct),
+      v: vol,
+      px: series.map((bar) => bar.close),
+      vl: series.map((bar) => bar.volume),
+    };
   });
   publishTape(rows);
 }

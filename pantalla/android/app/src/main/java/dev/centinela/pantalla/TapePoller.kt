@@ -37,6 +37,7 @@ object TapePoller {
     }
 
     private fun fetch() {
+        BleLink.pushClock()
         val context = app ?: return
         val base = Prefs.haUrl(context).trimEnd('/')
         val token = Prefs.haToken(context)
@@ -68,6 +69,10 @@ object TapePoller {
                 obj.put("price", row.optString("p"))
                 obj.put("chg", row.optString("c"))
                 obj.put("vol", row.optString("v"))
+                val px = row.optJSONArray("px")
+                val vl = row.optJSONArray("vl")
+                if (px != null) obj.put("px", px)
+                if (vl != null) obj.put("vl", vl)
                 lines.add(obj.toString() + "\n")
             }
             if (lines.isNotEmpty()) BleLink.pushQuotes(lines)

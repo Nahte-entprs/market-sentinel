@@ -44,7 +44,7 @@ export const config = {
 
 export const MARKET_TZ = "America/New_York";
 
-export function isRth(now = new Date()): boolean {
+function nyClock(now: Date) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: MARKET_TZ,
     weekday: "short",
@@ -52,12 +52,23 @@ export function isRth(now = new Date()): boolean {
     minute: "2-digit",
     hourCycle: "h23",
   }).formatToParts(now);
-  const weekday = parts.find((p) => p.type === "weekday")?.value;
-  if (weekday === "Sat" || weekday === "Sun") return false;
+  const weekday = parts.find((p) => p.type === "weekday")?.value ?? "";
   const hour = Number(parts.find((p) => p.type === "hour")?.value);
   const minute = Number(parts.find((p) => p.type === "minute")?.value);
-  const m = hour * 60 + minute;
-  return m >= 9 * 60 + 30 && m < 16 * 60;
+  return { weekday, minutes: hour * 60 + minute };
+}
+
+export function isRth(now = new Date()): boolean {
+  const { weekday, minutes } = nyClock(now);
+  if (weekday === "Sat" || weekday === "Sun") return false;
+  return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
+}
+
+/** Preapertura 4:00, regular y after-hours hasta las 20:00 ET. */
+export function isExtendedHours(now = new Date()): boolean {
+  const { weekday, minutes } = nyClock(now);
+  if (weekday === "Sat" || weekday === "Sun") return false;
+  return minutes >= 4 * 60 && minutes < 20 * 60;
 }
 
 export function isQuietHours(now = new Date()): boolean {

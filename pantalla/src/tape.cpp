@@ -3,7 +3,7 @@
 #include <ArduinoJson.h>
 #include <string.h>
 
-static constexpr int TAPE_CAP = 16;
+static constexpr int TAPE_CAP = 4;
 static TapeRow rows[TAPE_CAP];
 static int count = 0;
 
@@ -36,6 +36,19 @@ int tape_apply(const char *line) {
   copy_field(rows[at].price, sizeof rows[at].price, doc["price"] | "");
   copy_field(rows[at].change, sizeof rows[at].change, doc["chg"] | "");
   copy_field(rows[at].volume, sizeof rows[at].volume, doc["vol"] | "");
+  rows[at].n = 0;
+  JsonArray px = doc["px"].as<JsonArray>();
+  JsonArray vl = doc["vl"].as<JsonArray>();
+  int n = 0;
+  for (JsonVariant item : px) {
+    if (n >= TAPE_CURVE_CAP) break;
+    rows[at].px[n] = item.as<float>();
+    float bar = 0;
+    if (n < (int)vl.size()) bar = vl[n].as<float>();
+    rows[at].vl[n] = bar < 0 ? 0 : bar;
+    n++;
+  }
+  rows[at].n = (uint8_t)n;
   return 1;
 }
 
