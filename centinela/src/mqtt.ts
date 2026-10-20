@@ -468,6 +468,7 @@ export function publishTape(
     i?: number[];
     px?: number[];
     vl?: number[];
+    va?: number[];
   }[],
 ) {
   pub(`${PREFIX}/tape`, { n: rows.length, rows }, true);

@@ -68,7 +68,10 @@ static void ingest(const char *line, bool from_ble) {
       if (from_ble) ble_ack("err\n");
       return;
     }
-    if (panel_ok) ui_reload();
+    if (panel_ok) {
+      ui_note_quote();
+      ui_reload();
+    }
     Serial.printf("[cinta] %s\n", tape_count() ? tape_at(tape_count() - 1)->symbol : "?");
     if (from_ble) ble_ack("ok\n");
     return;

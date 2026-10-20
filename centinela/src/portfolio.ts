@@ -1,5 +1,5 @@
 import { listTickers, listTickersByCategory } from "./universe.ts";
-import { getQuote, liveTapeQuote, quoteError, readSessionSeries, readVolumeCurve, readVolumeSignal } from "./quotes.ts";
+import { getQuote, liveTapeQuote, quoteError, readSessionSeries, readTapeVolumeAverage, readVolumeCurve, readVolumeSignal } from "./quotes.ts";
 import { publishCartera, publishTape, publishWatchlist } from "./mqtt.ts";
 import { MIN_SLOT_SAMPLES } from "./volume.ts";
 import { watchBand } from "./settings.ts";
@@ -173,9 +173,10 @@ export function publishLiveTape() {
         : "";
     const series = readSessionSeries(t.symbol);
     const t1 = Math.floor(Date.now() / 1000);
-    const t0 = t1 - 8 * 3600;
-    const slots = 96;
+    const t0 = t1 - 7 * 3600;
+    const slots = 84;
     const step = (t1 - t0) / slots;
+    const avg = readTapeVolumeAverage(t.symbol, t0, t1, slots);
     const bucketPx: (number | null)[] = Array(slots).fill(null);
     const bucketVl: number[] = Array(slots).fill(0);
     for (const bar of series) {
@@ -190,12 +191,14 @@ export function publishLiveTape() {
     const i: number[] = [];
     const px: number[] = [];
     const vl: number[] = [];
+    const va: number[] = [];
     for (let k = 0; k < slots; k++) {
       const v = bucketPx[k];
       if (v == null) continue;
       i.push(k);
       px.push(v);
       vl.push(bucketVl[k]);
+      va.push(avg[k] ?? 0);
     }
     return {
       s: t.symbol,
@@ -208,6 +211,7 @@ export function publishLiveTape() {
       i,
       px,
       vl,
+      va,
     };
   });
   publishTape(rows);

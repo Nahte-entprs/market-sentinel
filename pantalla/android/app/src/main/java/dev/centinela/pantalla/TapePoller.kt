@@ -8,7 +8,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object TapePoller {
-    private const val EVERY_MS = 20_000L
+    private const val EVERY_MS = 10_000L
     private val thread = HandlerThread("centinela-tape")
     private val handler by lazy { Handler(thread.looper) }
     private var started = false
@@ -75,9 +75,11 @@ object TapePoller {
                 val idx = row.optJSONArray("i")
                 val px = row.optJSONArray("px")
                 val vl = row.optJSONArray("vl")
+                val va = row.optJSONArray("va")
                 if (idx != null) obj.put("i", idx)
                 if (px != null) obj.put("px", px)
                 if (vl != null) obj.put("vl", vl)
+                if (va != null) obj.put("va", va)
                 lines.add(obj.toString() + "\n")
             }
             if (lines.isNotEmpty()) BleLink.pushQuotes(lines)

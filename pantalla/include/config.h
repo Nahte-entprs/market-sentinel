@@ -47,6 +47,6 @@
 #define NOTICE_KEEP_SEC 600
 #define TITLE_CHARS 80
 #define MESSAGE_CHARS 180
-#define LINE_ASM_CAP 3072
+#define LINE_ASM_CAP 4096
 
 #define BLE_NAME "Centinela"

@@ -386,9 +386,9 @@ export function symbolsToRenew(): QuoteGaps {
   return { missing, stale, noCurve };
 }
 
-const TAPE_WINDOW_MS = 8 * 3600_000;
+const TAPE_WINDOW_MS = 7 * 3600_000;
 
-/** Velas de los últimos 8 horas, en orden. La pantalla las coloca en ese eje. */
+/** Velas de las últimas 7 horas, en orden. La pantalla las coloca en ese eje. */
 export function readSessionSeries(symbol: string): { ms: number; close: number; volume: number }[] {
   const until = Date.now();
   const since = new Date(until - TAPE_WINDOW_MS).toISOString();
@@ -406,6 +406,37 @@ export function readSessionSeries(symbol: string): { ms: number; close: number; 
     });
   }
   return out;
+}
+
+/** Volumen medio a la misma hora, últimos 7 días, alineado a las cubetas de la cinta. */
+export function readTapeVolumeAverage(symbol: string, t0Sec: number, t1Sec: number, slots: number): number[] {
+  const empty = Array.from({ length: slots }, () => 0);
+  const win = t1Sec - t0Sec;
+  if (!(win > 0) || slots < 2) return empty;
+  const since = new Date((t0Sec - 7 * 86400) * 1000).toISOString();
+  const until = new Date(t0Sec * 1000).toISOString();
+  const bars = db
+    .prepare("SELECT ts, volume FROM quote_intraday WHERE symbol = ? AND ts >= ? AND ts < ? ORDER BY ts ASC")
+    .all(symbol, since, until) as { ts: string; volume: number }[];
+  const sum = Array.from({ length: slots }, () => 0);
+  const cnt = Array.from({ length: slots }, () => 0);
+  const startTod = ((t0Sec % 86400) + 86400) % 86400;
+  for (const bar of bars) {
+    const sec = Math.floor(Date.parse(bar.ts) / 1000);
+    if (!Number.isFinite(sec)) continue;
+    const age = t0Sec - sec;
+    if (age <= 0 || age > 7 * 86400) continue;
+    const barTod = ((sec % 86400) + 86400) % 86400;
+    let off = barTod - startTod;
+    if (off < 0) off += 86400;
+    if (off >= win) continue;
+    const vol = Math.max(0, Number(bar.volume) || 0);
+    if (!(vol > 0)) continue;
+    const idx = Math.min(slots - 1, Math.floor((off * slots) / win));
+    sum[idx] += vol;
+    cnt[idx] += 1;
+  }
+  return sum.map((v, i) => (cnt[i] > 0 ? Math.round(v / cnt[i]) : 0));
 }
 
 export type LiveTapeQuote = { price: number; changePct: number; volume: number; extended: boolean };

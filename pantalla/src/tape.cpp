@@ -3,8 +3,7 @@
 #include <ArduinoJson.h>
 #include <string.h>
 
-static constexpr int TAPE_CAP = 4;
-static TapeRow rows[TAPE_CAP];
+static TapeRow rows[1];
 static int count = 0;
 
 static void copy_field(char *dst, size_t cap, const char *src) {
@@ -21,17 +20,9 @@ int tape_apply(const char *line) {
   const char *symbol = doc["symbol"] | "";
   if (!symbol[0] || strlen(symbol) > 8) return -1;
 
-  int at = -1;
-  for (int i = 0; i < count; i++) {
-    if (strcmp(rows[i].symbol, symbol) == 0) {
-      at = i;
-      break;
-    }
-  }
-  if (at < 0) {
-    if (count < TAPE_CAP) at = count++;
-    else at = TAPE_CAP - 1;
-  }
+  int at = 0;
+  count = 1;
+  memset(&rows[0], 0, sizeof rows[0]);
   copy_field(rows[at].symbol, sizeof rows[at].symbol, symbol);
   copy_field(rows[at].price, sizeof rows[at].price, doc["price"] | "");
   copy_field(rows[at].change, sizeof rows[at].change, doc["chg"] | "");
@@ -44,6 +35,7 @@ int tape_apply(const char *line) {
   JsonArray idx = doc["i"].as<JsonArray>();
   JsonArray px = doc["px"].as<JsonArray>();
   JsonArray vl = doc["vl"].as<JsonArray>();
+  JsonArray va = doc["va"].as<JsonArray>();
   int n = 0;
   int count_px = (int)px.size();
   for (int k = 0; k < count_px && n < TAPE_SLOTS; k++) {
@@ -55,6 +47,9 @@ int tape_apply(const char *line) {
     float bar = 0;
     if (k < (int)vl.size() && !vl[k].isNull()) bar = vl[k].as<float>();
     rows[at].vl[n] = bar < 0 ? 0 : bar;
+    float avg = 0;
+    if (k < (int)va.size() && !va[k].isNull()) avg = va[k].as<float>();
+    rows[at].va[n] = avg < 0 ? 0 : avg;
     n++;
   }
   rows[at].n = (uint8_t)n;

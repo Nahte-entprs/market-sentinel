@@ -19,6 +19,7 @@ struct TapeRow {
   uint8_t slot[TAPE_SLOTS];
   float px[TAPE_SLOTS];
   float vl[TAPE_SLOTS];
+  float va[TAPE_SLOTS];
 };
 
 int tape_count();
