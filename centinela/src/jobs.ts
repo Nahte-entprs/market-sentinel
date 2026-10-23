@@ -52,16 +52,20 @@ function jobInfo(def: JobDef): JobInfo {
 
 async function quotesJob() {
   setPhase("cotizaciones");
-  const symbols = allQuoteSymbols();
+  const live = new Set(listTickersByCategory("live").map((t) => t.symbol));
+  const everyone = allQuoteSymbols();
+  const symbols = everyone.filter((s) => !live.has(s));
   const before = symbolsToRenew();
   const show = (items: string[]) => (items.length ? items.join(", ") : "—");
   console.log(`[quote] CNBC · sin precio: ${show(before.missing)} · desactualizados: ${show(before.stale)} · sin curva: ${show(before.noCurve)}`);
   setPhase(`CNBC ${symbols.length} símbolos`);
-  const r = await refreshFromCnbc(symbols, () => publishCarteraState());
+  const r = symbols.length
+    ? await refreshFromCnbc(symbols, () => publishCarteraState())
+    : { ok: 0, missing: [] as string[], error: undefined as string | undefined };
   publishCarteraState();
   if (!stillRunning()) return "cortado por timeout";
-  if (r.ok === 0) throw new Error(r.error || r.missing[0] || "CNBC sin precios");
-  const needDaily = symbols.filter((s) => !r.missing.includes(s) && needsDailyBars(s));
+  if (symbols.length && r.ok === 0) throw new Error(r.error || r.missing[0] || "CNBC sin precios");
+  const needDaily = everyone.filter((s) => !r.missing.includes(s) && needsDailyBars(s));
   let dailyOk = 0;
   const dailyErr: string[] = [];
   for (const symbol of needDaily) {
@@ -77,7 +81,7 @@ async function quotesJob() {
       console.error(`[quote] ${symbol} diario: ${msg}`);
     }
   }
-  const curves = symbolsToRenew().noCurve.filter((s) => !r.missing.includes(s));
+  const curves = symbolsToRenew().noCurve.filter((s) => !live.has(s) && !r.missing.includes(s));
   let curveOk = 0;
   const curveErr: string[] = [];
   for (const symbol of curves) {
@@ -728,6 +732,9 @@ async function reactionJob() {
   return `${n} snapshots T+`;
 }
 
+let tapeCurveAt = 0;
+let tapeCurveCursor = 0;
+
 async function tapeJob() {
   const symbols = listTickersByCategory("live").map((t) => t.symbol);
   if (!symbols.length) {
@@ -736,19 +743,25 @@ async function tapeJob() {
   }
   setPhase("cinta");
   const r = await refreshFromCnbc(symbols);
-  try {
-    await refreshCnbcCurve(symbols[0]);
-  } catch (err) {
-    console.error(`[cinta] ${symbols[0]} curva: ${(err as Error).message}`);
+  if (Date.now() - tapeCurveAt >= 60_000) {
+    tapeCurveAt = Date.now();
+    const symbol = symbols[tapeCurveCursor % symbols.length];
+    tapeCurveCursor++;
+    try {
+      await refreshCnbcCurve(symbol);
+    } catch (err) {
+      console.error(`[cinta] ${symbol} curva: ${(err as Error).message}`);
+    }
   }
+  publishLiveTape();
   publishCarteraState();
   if (r.ok === 0 && (r.error || r.missing.length)) throw new Error(r.error || r.missing[0] || "CNBC sin precios");
   return `${r.ok} precios`;
 }
 
 export const JOBS: JobDef[] = [
-  { id: "quotes.poll", name: "Cotizaciones", description: "Precio, volumen y medias móviles", cadenceMs: () => (isRth() ? 5 : 15) * 60_000, run: quotesJob },
-  { id: "tape.live", name: "En tiempo real", description: "Precio y volumen de esa cartera, para la pantalla", cadenceMs: () => (isExtendedHours() ? 60 : 5 * 60) * 1000, run: tapeJob },
+  { id: "quotes.poll", name: "Cotizaciones", description: "Precio, volumen y medias móviles", cadenceMs: () => (isRth() ? 15 : 30) * 60_000, run: quotesJob },
+  { id: "tape.live", name: "En tiempo real", description: "Precio de la cartera en vivo, para la pantalla", cadenceMs: () => (isExtendedHours() ? 10 : 60) * 1000, run: tapeJob },
   { id: "fundamentals.poll", name: "Fundamentals", description: "Rating analistas, PT y 52w", cadenceMs: () => 60 * 60_000, run: fundamentalsJob },
   { id: "regime.tick", name: "Régimen", description: "NORMAL → CRISIS", cadenceMs: () => (isRth() ? 5 : 15) * 60_000, run: regimeJob },
   {
@@ -1004,10 +1017,35 @@ function drain(lane: Lane): Promise<void> {
   return drains[lane]!;
 }
 
+async function runTapeLoop() {
+  const def = JOBS.find((j) => j.id === "tape.live");
+  if (!def) return;
+  const started = Date.now();
+  try {
+    safeSetJob(def.id, "running", null, null);
+    safePublish(def);
+    const note = await tapeJob();
+    const secs = ((Date.now() - started) / 1000).toFixed(1);
+    console.log(`[job] cinta ok ${secs}s · ${note}`);
+    safeSetJob(def.id, "ok", null, note);
+    lastOk.set(def.id, Date.now());
+  } catch (err) {
+    const msg = (err as Error).message.slice(0, 240);
+    console.error(`[job] cinta error · ${msg}`);
+    safeSetJob(def.id, "error", msg, null);
+  } finally {
+    safePublish(def);
+    const wait = Math.max(250, def.cadenceMs() - (Date.now() - started));
+    setTimeout(() => void runTapeLoop(), wait);
+  }
+}
+
 export function startScheduler() {
   onPulse(logHeartbeat);
+  setTimeout(() => void runTapeLoop(), 4000);
   const ordered = [JOBS.find((j) => j.id === "quotes.poll")!, ...JOBS.filter((j) => j.id !== "quotes.poll")];
   for (const def of ordered) {
+    if (def.id === "tape.live") continue;
     const lane = laneOf(def.id);
     const tick = async () => {
       try {

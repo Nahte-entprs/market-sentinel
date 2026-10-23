@@ -161,16 +161,14 @@ export function toPosition(t: TickerRow): CarteraPosition {
 
 export function publishLiveTape() {
   const tickers = listTickersByCategory("live");
-  const rows = tickers.slice(0, 1).map((t) => {
+  const rows = tickers.slice(0, 8).map((t) => {
     const q = getQuote(t.symbol);
     const live = liveTapeQuote(t.symbol);
     const price = live?.price ?? q?.price;
     const changePct = live ? live.changePct : q?.changeTrusted ? q.changePct : null;
-    const vol = live?.extended
-      ? compactVol(live.volume)
-      : q && q.volumeRatio > 0
-        ? `${q.volumeRatio.toFixed(1)}x`
-        : "";
+    const shares = compactVol(live?.volume || q?.volume || 0);
+    const ratio = q && q.volumeRatio > 0 ? `${q.volumeRatio.toFixed(1)}x prom` : "";
+    const vol = shares && ratio ? `${shares}  ${ratio}` : shares || ratio;
     const series = readSessionSeries(t.symbol);
     const t1 = Math.floor(Date.now() / 1000);
     const t0 = t1 - 7 * 3600;

@@ -1,9 +1,12 @@
 #include "tape.h"
 
+#include <Arduino.h>
 #include <ArduinoJson.h>
 #include <string.h>
 
-static TapeRow rows[1];
+static constexpr int TAPE_MAX = 8;
+static TapeRow rows[TAPE_MAX];
+static uint32_t seen_ms[TAPE_MAX];
 static int count = 0;
 
 static void copy_field(char *dst, size_t cap, const char *src) {
@@ -20,9 +23,34 @@ int tape_apply(const char *line) {
   const char *symbol = doc["symbol"] | "";
   if (!symbol[0] || strlen(symbol) > 8) return -1;
 
-  int at = 0;
-  count = 1;
-  memset(&rows[0], 0, sizeof rows[0]);
+  uint32_t now = millis();
+  int kept = 0;
+  for (int i = 0; i < count; i++) {
+    if (strcmp(rows[i].symbol, symbol) != 0 && now - seen_ms[i] > 30000) continue;
+    if (kept != i) {
+      rows[kept] = rows[i];
+      seen_ms[kept] = seen_ms[i];
+    }
+    kept++;
+  }
+  count = kept;
+
+  int at = -1;
+  for (int i = 0; i < count; i++) {
+    if (strcmp(rows[i].symbol, symbol) == 0) at = i;
+  }
+  if (at < 0) {
+    if (count >= TAPE_MAX) {
+      at = 0;
+      for (int i = 1; i < count; i++) {
+        if (seen_ms[i] < seen_ms[at]) at = i;
+      }
+    } else {
+      at = count++;
+    }
+    memset(&rows[at], 0, sizeof rows[at]);
+  }
+  seen_ms[at] = now;
   copy_field(rows[at].symbol, sizeof rows[at].symbol, symbol);
   copy_field(rows[at].price, sizeof rows[at].price, doc["price"] | "");
   copy_field(rows[at].change, sizeof rows[at].change, doc["chg"] | "");

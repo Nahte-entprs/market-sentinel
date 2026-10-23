@@ -36,7 +36,10 @@ static bool take_clock(const char *line) {
   if (deserializeJson(doc, line)) return false;
   const char *op = doc["op"] | "";
   if (strcmp(op, "clock") != 0) return false;
-  clock_observe(doc["at"] | "");
+  const char *at = doc["at"] | "";
+  clock_observe(at);
+  int64_t epoch = 0;
+  if (parse_iso_epoch(at, &epoch) && epoch > 0 && panel_ok) ui_set_clock((int32_t)epoch);
   return true;
 }
 
@@ -70,6 +73,12 @@ static void ingest(const char *line, bool from_ble) {
     }
     if (panel_ok) {
       ui_note_quote();
+      int32_t newest = 0;
+      for (int i = 0; i < tape_count(); i++) {
+        const TapeRow *row = tape_at(i);
+        if (row && row->t1 > newest) newest = row->t1;
+      }
+      if (newest > 0) ui_set_clock(newest);
       ui_reload();
     }
     Serial.printf("[cinta] %s\n", tape_count() ? tape_at(tape_count() - 1)->symbol : "?");
