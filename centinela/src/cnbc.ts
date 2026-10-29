@@ -10,6 +10,8 @@ const SYMBOLS: Record<string, string> = {
   "USDJPY=X": "JPY=",
   "^TNX": ".TNX",
   "^VIX": ".VIX",
+  "^GSPC": ".SPX",
+  "^NDX": ".NDX",
 };
 
 export function cnbcSymbol(symbol: string) {

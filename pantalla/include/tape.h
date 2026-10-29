@@ -11,7 +11,9 @@ struct TapeRow {
   char symbol[12];
   char price[16];
   char change[12];
-  char volume[12];
+  char volume[32];
+  char macro[80];
+  char signal[64];
   int32_t t0;
   int32_t t1;
   float level;

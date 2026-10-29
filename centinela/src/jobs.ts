@@ -2,7 +2,7 @@ import { db, json, nowIso, parseJson, getSetting, getMeta, setMeta } from "./db.
 import { isExtendedHours, isRth } from "./config.ts";
 import { listFactors, listIdeas, listTickers, listTickersByCategory } from "./universe.ts";
 import { syncTemporalCartera } from "./temporal.ts";
-import { allQuoteSymbols, allQuotes, getQuote, needsDailyBars, readVolumeSignal, refreshFromCnbc, refreshCnbcCurve, refreshCnbcDaily, refreshFundamentals, refreshSymbolSoon, symbolsToRenew, threeDayTrend } from "./quotes.ts";
+import { allQuoteSymbols, allQuotes, getQuote, needsDailyBars, readVolumeSignal, refreshFromCnbc, refreshCnbcCurve, refreshCnbcDaily, refreshFundamentals, refreshSymbolSoon, SCREEN_QUOTE_SYMBOLS, symbolsToRenew, threeDayTrend } from "./quotes.ts";
 import { claimTickerWatch, emitIfNeeded, lastAlert, lastDigest, listAlerts, maybePushCrisis, maybePushReddit, pushCarteraBatch, saveDigest } from "./alerts.ts";
 import { ingestFeeds, recentNews } from "./news.ts";
 import { extractEntities, lexiconPolarity, matchThesis } from "./entities.ts";
@@ -742,7 +742,7 @@ async function tapeJob() {
     return "sin tickers";
   }
   setPhase("cinta");
-  const r = await refreshFromCnbc(symbols);
+  const r = await refreshFromCnbc([...new Set([...symbols, ...SCREEN_QUOTE_SYMBOLS])]);
   if (Date.now() - tapeCurveAt >= 60_000) {
     tapeCurveAt = Date.now();
     const symbol = symbols[tapeCurveCursor % symbols.length];

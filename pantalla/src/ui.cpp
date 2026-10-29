@@ -25,7 +25,6 @@ static lv_obj_t *battery = nullptr;
 static lv_obj_t *stale_box = nullptr;
 static lv_obj_t *clock_label = nullptr;
 static lv_obj_t *filter_btns[2] = {};
-static lv_obj_t *heart_part[3] = {};
 static lv_obj_t *batt_fill = nullptr;
 static lv_obj_t *batt_mark = nullptr;
 static lv_obj_t *drawer = nullptr;
@@ -108,7 +107,6 @@ static int batt_state = 0;
 static uint32_t batt_ms = 0;
 static lv_color_t ball_ink = lv_color_hex(0xF2F0E6);
 static lv_obj_t *ball = nullptr;
-static int heart_span = 14;
 static uint32_t last_quote_ms = 0;
 static lv_obj_t *cap_label = nullptr;
 static lv_obj_t *vol_label = nullptr;
@@ -226,11 +224,11 @@ static void draw_times(lv_draw_ctx_t *ctx, const lv_obj_t *chart, int x_ofs, int
   int step = mark_sec > 0 ? mark_sec : 1800;
   int64_t rem = ((local0 % step) + step) % step;
   for (int64_t mark = rem == 0 ? local0 : local0 + (step - rem); mark < local1; mark += step) {
-    int64_t shown = display_mark(mark);
-    if (shown <= local0 || shown >= local1) continue;
-    int x = (int)x_ofs + PLOT_INSET + (int)((shown - local0) * inner / span);
+    if (mark <= local0 || mark >= local1) continue;
+    int x = (int)x_ofs + PLOT_INSET + (int)((mark - local0) * inner / span);
     if (x < (int)x_ofs + PLOT_INSET || x >= live_x - 18) continue;
     char text[8];
+    int64_t shown = display_mark(mark);
     format_clock((int32_t)(shown - (int64_t)TZ_OFFSET_MIN * 60), text, sizeof text, false);
     draw_sideways(ctx, text, x, top, lv_color_hex(0xC5CBB8));
   }
@@ -290,7 +288,7 @@ static int days_from_civil(int y, unsigned m, unsigned d) {
   const unsigned yoe = (unsigned)(y - era * 400);
   const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
   const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-  return era * 400 + (int)doe - 719468;
+  return era * 146097 + (int)doe - 719468;
 }
 
 static void civil_from_days(int z, int *y, int *m, int *d) {
@@ -365,8 +363,8 @@ static void draw_sessions(lv_draw_ctx_t *ctx, int x_ofs, int y_ofs, int w, int h
       lv_draw_line_dsc_t line;
       lv_draw_line_dsc_init(&line);
       line.color = lv_color_hex(col[k]);
-      line.width = 2;
-      line.opa = (lv_opa_t)220;
+      line.width = 3;
+      line.opa = LV_OPA_COVER;
       lv_point_t p1 = {(lv_coord_t)x, (lv_coord_t)(y_ofs + 1)};
       lv_point_t p2 = {(lv_coord_t)x, (lv_coord_t)(y_ofs + h - 1)};
       lv_draw_line(ctx, &line, &p1, &p2);
@@ -457,49 +455,49 @@ static void on_chart_draw(lv_event_t *e) {
   int inner = (int)w - PLOT_INSET * 2;
   if (inner < 8) inner = (int)w;
   for (; mark < local1; mark += step) {
-    int64_t shown = display_mark(mark);
-    if (shown <= local0 || shown >= local1) continue;
-    int x = (int)x_ofs + PLOT_INSET + (int)((shown - local0) * inner / span);
+    if (mark <= local0 || mark >= local1) continue;
+    int x = (int)x_ofs + PLOT_INSET + (int)((mark - local0) * inner / span);
     if (x <= (int)x_ofs + PLOT_INSET || x >= (int)x_ofs + (int)w - PLOT_INSET) continue;
     lv_point_t p1 = {(lv_coord_t)x, (lv_coord_t)(y_ofs + 1)};
     lv_point_t p2 = {(lv_coord_t)x, (lv_coord_t)(y_ofs + h - 1)};
     lv_draw_line(ctx, &dsc, &p1, &p2);
   }
-  draw_sessions(ctx, (int)x_ofs, (int)y_ofs, (int)w, (int)h);
   draw_times(ctx, obj, (int)x_ofs, (int)w);
-  if (!(plot_hi > plot_lo)) return;
-  lv_draw_line_dsc_t price;
-  lv_draw_line_dsc_init(&price);
-  price.width = 2;
-  price.opa = LV_OPA_COVER;
-  int prev = -1;
-  int dir = 0;
-  auto y_of = [&](float v) -> int {
-    float t = (v - plot_lo) / (plot_hi - plot_lo);
-    if (t < 0) t = 0;
-    if (t > 1) t = 1;
-    return (int)y_ofs + (int)h - (int)(t * (float)h);
-  };
-  for (int i = 0; i < TAPE_SLOTS; i++) {
-    if (i < slot_origin) continue;
-    if (!px_on[i]) {
-      prev = -1;
-      continue;
-    }
-    if (prev >= 0) {
-      float a = px_slot[prev];
-      float b = px_slot[i];
-      if (b > a + 0.001f) dir = 1;
-      else if (b < a - 0.001f) dir = -1;
-      if (i == prev + 1) {
-        price.color = dir > 0 ? lv_color_hex(0x3DDC97) : dir < 0 ? lv_color_hex(0xFF6B6B) : lv_color_hex(0xF2F0E6);
-        lv_point_t p1 = {(lv_coord_t)inner_x((int)x_ofs, (int)w, prev), (lv_coord_t)y_of(a)};
-        lv_point_t p2 = {(lv_coord_t)inner_x((int)x_ofs, (int)w, i), (lv_coord_t)y_of(b)};
-        lv_draw_line(ctx, &price, &p1, &p2);
+  if (plot_hi > plot_lo) {
+    lv_draw_line_dsc_t price;
+    lv_draw_line_dsc_init(&price);
+    price.width = 2;
+    price.opa = LV_OPA_COVER;
+    int prev = -1;
+    int dir = 0;
+    auto y_of = [&](float v) -> int {
+      float t = (v - plot_lo) / (plot_hi - plot_lo);
+      if (t < 0) t = 0;
+      if (t > 1) t = 1;
+      return (int)y_ofs + (int)h - (int)(t * (float)h);
+    };
+    for (int i = 0; i < TAPE_SLOTS; i++) {
+      if (i < slot_origin) continue;
+      if (!px_on[i]) {
+        prev = -1;
+        continue;
       }
+      if (prev >= 0) {
+        float a = px_slot[prev];
+        float b = px_slot[i];
+        if (b > a + 0.001f) dir = 1;
+        else if (b < a - 0.001f) dir = -1;
+        if (i == prev + 1) {
+          price.color = dir > 0 ? lv_color_hex(0x3DDC97) : dir < 0 ? lv_color_hex(0xFF6B6B) : lv_color_hex(0xF2F0E6);
+          lv_point_t p1 = {(lv_coord_t)inner_x((int)x_ofs, (int)w, prev), (lv_coord_t)y_of(a)};
+          lv_point_t p2 = {(lv_coord_t)inner_x((int)x_ofs, (int)w, i), (lv_coord_t)y_of(b)};
+          lv_draw_line(ctx, &price, &p1, &p2);
+        }
+      }
+      prev = i;
     }
-    prev = i;
   }
+  draw_sessions(ctx, (int)x_ofs, (int)y_ofs, (int)w, (int)h);
 }
 
 static int tape_index() {
@@ -582,7 +580,51 @@ static void on_check(lv_event_t *e) {
   dirty = true;
 }
 
+static lv_color_t metric_color(const char *token) {
+  if (strncmp(token, "RSI ", 4) == 0) {
+    if (token[4] < '0' || token[4] > '9') return lv_color_hex(0xC5CBB8);
+    float v = strtof(token + 4, nullptr);
+    if (v >= 70.f || v <= 30.f) return lv_color_hex(0xE0A100);
+    return lv_color_hex(0xC5CBB8);
+  }
+  const char *sp = strchr(token, ' ');
+  if (sp && sp[1] == '+') return lv_color_hex(0x3DDC97);
+  if (sp && sp[1] == '-') return lv_color_hex(0xFF6B6B);
+  return lv_color_hex(0xC5CBB8);
+}
+
+static void paint_metrics(const char *packed, const char *fallback, int height) {
+  const char *src = packed && packed[0] ? packed : fallback;
+  char buf[96];
+  strncpy(buf, src, sizeof buf - 1);
+  buf[sizeof buf - 1] = 0;
+  lv_obj_t *row = lv_obj_create(list);
+  lv_obj_set_width(row, lv_pct(100));
+  lv_obj_set_height(row, height);
+  lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
+  lv_obj_set_style_border_width(row, 1, 0);
+  lv_obj_set_style_border_color(row, lv_color_hex(0x3C4436), 0);
+  lv_obj_set_style_radius(row, 0, 0);
+  lv_obj_set_style_pad_hor(row, 2, 0);
+  lv_obj_set_style_pad_ver(row, 0, 0);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  for (char *p = buf; p && *p;) {
+    char *sep = strchr(p, ';');
+    if (sep) *sep = 0;
+    lv_obj_t *lb = lv_label_create(row);
+    lv_label_set_text(lb, p);
+    lv_obj_set_style_text_font(lb, &font_latin_14, 0);
+    lv_obj_set_style_text_color(lb, metric_color(p), 0);
+    if (!sep) break;
+    p = sep + 1;
+  }
+}
+
 static void paint_live(const TapeRow *q) {
+  paint_metrics(q->macro, "SPX --;NDX --;CL --;10Y --;VIX --", 24);
   bool up = q->change[0] == '+';
   bool down = q->change[0] == '-';
   lv_color_t ink = up ? lv_color_hex(0x3DDC97) : down ? lv_color_hex(0xFF6B6B) : lv_color_hex(0xF2F0E6);
@@ -678,12 +720,14 @@ static void paint_live(const TapeRow *q) {
     }
     float pct = q->level > 0 ? (cur - q->level) / q->level * 100.f : 0;
     char extra[40];
-    snprintf(extra, sizeof extra, "%.2f  %+.1f%%", q->level, pct);
+    snprintf(extra, sizeof extra, "%.2f  %+.2f%%", q->level, pct);
     lv_obj_t *nl = lv_label_create(head);
     lv_label_set_text(nl, extra);
     lv_obj_set_style_text_font(nl, &font_latin_14, 0);
     lv_obj_set_style_text_color(nl, lv_color_hex(0xD4A6FF), 0);
   }
+
+  paint_metrics(q->signal, "RSI --;VWAP --;RVOL --", 22);
 
   if (q->n < 2) {
     lv_obj_t *empty = lv_label_create(list);
@@ -708,10 +752,6 @@ static void paint_live(const TapeRow *q) {
   float max_abs = fabsf((raw_lo - base) / base * 100.f);
   float hi_abs = fabsf((raw_hi - base) / base * 100.f);
   if (hi_abs > max_abs) max_abs = hi_abs;
-  if (q->level > 0) {
-    float lv_abs = fabsf((q->level - base) / base * 100.f);
-    if (lv_abs > max_abs) max_abs = lv_abs;
-  }
   float step = axis_step(max_abs);
   float plo = base * (1.f - step / 100.f);
   float phi = base * (1.f + step / 100.f);
@@ -766,10 +806,6 @@ static void paint_live(const TapeRow *q) {
     if (avg_slot[i] > vmax) vmax = avg_slot[i];
   }
   if (any) {
-    if (q->level > 0) {
-      if (q->level < vlo) vlo = q->level;
-      if (q->level > vhi_px) vhi_px = q->level;
-    }
     vol_max = vmax > 0 ? vmax : vol_max;
     float mid = (vlo + vhi_px) / 2.f;
     if (!(mid > 0)) mid = base > 0 ? base : 1.f;
@@ -813,7 +849,7 @@ static void paint_live(const TapeRow *q) {
   lv_chart_set_type(price, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(price, TAPE_SLOTS);
   lv_chart_set_range(price, LV_CHART_AXIS_PRIMARY_Y, 0, 1000);
-  if (q->level > 0) {
+  if (q->level > 0 && q->level >= plo && q->level <= phi) {
     lv_chart_series_t *ls = lv_chart_add_series(price, lv_color_hex(0xD4A6FF), LV_CHART_AXIS_PRIMARY_Y);
     lv_chart_set_all_value(price, ls, scale_point(q->level, plo, phi));
   }
@@ -1032,7 +1068,6 @@ static void rebuild() {
   dirty = false;
 }
 
-static void layout_heart(int span);
 static void refresh_battery();
 
 void ui_init() {
@@ -1055,7 +1090,10 @@ void ui_init() {
   lv_obj_set_size(bar, SCREEN_W, 36);
   lv_obj_align(bar, LV_ALIGN_TOP_MID, 0, 0);
   lv_obj_set_style_bg_color(bar, lv_color_hex(0x12140F), 0);
-  lv_obj_set_style_border_width(bar, 0, 0);
+  lv_obj_set_style_border_side(bar, LV_BORDER_SIDE_BOTTOM, 0);
+  lv_obj_set_style_border_width(bar, 1, 0);
+  lv_obj_set_style_border_color(bar, lv_color_hex(0x3C4436), 0);
+  lv_obj_set_style_radius(bar, 0, 0);
   lv_obj_set_style_pad_hor(bar, 6, 0);
   lv_obj_set_style_pad_ver(bar, 0, 0);
   lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
@@ -1091,22 +1129,15 @@ void ui_init() {
   lv_obj_center(stale_lbl);
 
   heart = lv_obj_create(bar);
-  lv_obj_set_size(heart, 28, 26);
-  lv_obj_align(heart, LV_ALIGN_RIGHT_MID, -158, 0);
-  lv_obj_set_style_bg_opa(heart, LV_OPA_TRANSP, 0);
+  lv_obj_set_size(heart, 12, 12);
+  lv_obj_align(heart, LV_ALIGN_RIGHT_MID, -156, 0);
+  lv_obj_set_style_radius(heart, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(heart, lv_color_hex(0x8A9086), 0);
+  lv_obj_set_style_bg_opa(heart, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(heart, 0, 0);
   lv_obj_set_style_pad_all(heart, 0, 0);
   lv_obj_clear_flag(heart, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_clear_flag(heart, LV_OBJ_FLAG_CLICKABLE);
-  for (int i = 0; i < 3; i++) {
-    heart_part[i] = lv_obj_create(heart);
-    lv_obj_set_style_radius(heart_part[i], LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(heart_part[i], 0, 0);
-    lv_obj_set_style_bg_opa(heart_part[i], LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(heart_part[i], lv_color_hex(0xE07080), 0);
-    lv_obj_clear_flag(heart_part[i], LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(heart_part[i], LV_OBJ_FLAG_CLICKABLE);
-  }
 
   battery = lv_obj_create(bar);
   lv_obj_set_size(battery, 36, 18);
@@ -1313,24 +1344,9 @@ void ui_init() {
   dirty = true;
 }
 
-static void layout_heart(int span) {
-  if (span < 8) span = 8;
-  if (span > 12) span = 12;
-  heart_span = span;
-  if (!heart_part[0]) return;
-  lv_color_t color = link_on ? lv_color_hex(0xFF3355) : lv_color_hex(0xE07080);
-  int bottom = span + 4;
-  int xs[3] = {1, 28 - 1 - span, (28 - bottom) / 2};
-  int ys[3] = {1, 1, 26 - bottom - 1};
-  int sz[3] = {span, span, bottom};
-  for (int i = 0; i < 3; i++) {
-    lv_obj_set_pos(heart_part[i], xs[i], ys[i]);
-    lv_obj_set_size(heart_part[i], sz[i], sz[i]);
-    lv_obj_set_style_bg_color(heart_part[i], color, 0);
-  }
+static void heart_blink(void *, int32_t v) {
+  if (heart) lv_obj_set_style_bg_opa(heart, (lv_opa_t)v, 0);
 }
-
-static void heart_zoom(void *, int32_t v) { layout_heart((int)v); }
 
 static void refresh_battery() {
   if (!batt_fill || !batt_mark) return;
@@ -1370,21 +1386,21 @@ void ui_set_clock(int32_t unix_sec) {
 void ui_set_link(bool online) {
   link_on = online;
   if (!heart) return;
-  lv_anim_del(heart, heart_zoom);
-  layout_heart(8);
+  lv_anim_del(heart, heart_blink);
+  lv_obj_set_style_bg_color(heart, lv_color_hex(online ? 0xFF3355 : 0x8A9086), 0);
+  lv_obj_set_style_bg_opa(heart, LV_OPA_COVER, 0);
   if (online) {
     lv_anim_t beat;
     lv_anim_init(&beat);
     lv_anim_set_var(&beat, heart);
-    lv_anim_set_exec_cb(&beat, heart_zoom);
-    lv_anim_set_values(&beat, 8, 12);
-    lv_anim_set_time(&beat, 160);
+    lv_anim_set_exec_cb(&beat, heart_blink);
+    lv_anim_set_values(&beat, LV_OPA_COVER, LV_OPA_20);
+    lv_anim_set_time(&beat, 180);
     lv_anim_set_playback_time(&beat, 420);
-    lv_anim_set_repeat_delay(&beat, 480);
+    lv_anim_set_repeat_delay(&beat, 360);
     lv_anim_set_repeat_count(&beat, LV_ANIM_REPEAT_INFINITE);
     lv_anim_start(&beat);
   }
-  lv_obj_invalidate(heart);
 }
 
 void ui_pump() {

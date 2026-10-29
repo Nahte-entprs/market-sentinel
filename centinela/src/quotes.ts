@@ -7,7 +7,9 @@ import { fetchCnbcDaily, fetchCnbcIntraday, fetchCnbcQuotes, type CnbcQuote } fr
 import { discardBody } from "./http.ts";
 import { setPhase, stillRunning } from "./pulse.ts";
 
-const MACRO_SYMS = ["CL=F", "USDJPY=X", "^TNX", "^VIX"];
+const MACRO_SYMS = ["CL=F", "USDJPY=X", "^TNX", "^VIX", "^GSPC", "^NDX"];
+
+export const SCREEN_QUOTE_SYMBOLS = ["^GSPC", "^NDX", "CL=F", "^TNX", "^VIX"];
 const YAHOO_HEADERS = {
   "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
   Accept: "application/json",
@@ -767,6 +769,77 @@ export function threeDayTrend(symbol: string): { pct: number; dir: 1 | -1 } | nu
   const allNeg = last3.every((r) => r < 0);
   if (!allPos && !allNeg) return null;
   return { pct: last3.reduce((a, b) => a + b, 0), dir: allPos ? 1 : -1 };
+}
+
+function signedPct(n: number) {
+  return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+}
+
+const SCREEN_MACRO: { symbol: string; label: string }[] = [
+  { symbol: "^GSPC", label: "SPX" },
+  { symbol: "^NDX", label: "NDX" },
+  { symbol: "CL=F", label: "CL" },
+  { symbol: "^TNX", label: "10Y" },
+  { symbol: "^VIX", label: "VIX" },
+];
+
+/** Franja de la pantalla: abreviatura y variación del día, sin precio. */
+export function screenMacroText(): string {
+  return SCREEN_MACRO.map(({ symbol, label }) => {
+    const q = getQuote(symbol);
+    if (!q || !q.changeTrusted) return `${label} --`;
+    return `${label} ${signedPct(q.changePct)}`;
+  }).join(";");
+}
+
+function wilderRsi(closes: number[], period: number): number | null {
+  if (closes.length < period + 1) return null;
+  let gain = 0;
+  let loss = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = closes[i]! - closes[i - 1]!;
+    if (d >= 0) gain += d;
+    else loss -= d;
+  }
+  let avgGain = gain / period;
+  let avgLoss = loss / period;
+  for (let i = period + 1; i < closes.length; i++) {
+    const d = closes[i]! - closes[i - 1]!;
+    const up = d > 0 ? d : 0;
+    const down = d < 0 ? -d : 0;
+    avgGain = (avgGain * (period - 1) + up) / period;
+    avgLoss = (avgLoss * (period - 1) + down) / period;
+  }
+  if (avgLoss === 0) return avgGain === 0 ? 50 : 100;
+  return 100 - 100 / (1 + avgGain / avgLoss);
+}
+
+/** RSI 14 de 5 min, distancia a la VWAP de hoy y volumen contra su promedio. */
+export function tapeSignalText(symbol: string, price: number, volumeRatio: number): string {
+  const rows = db
+    .prepare("SELECT ts, close, volume FROM quote_intraday WHERE symbol = ? AND close > 0 ORDER BY ts DESC LIMIT 160")
+    .all(symbol) as { ts: string; close: number; volume: number }[];
+  rows.reverse();
+  const rsi = wilderRsi(
+    rows.map((r) => r.close),
+    14,
+  );
+  const today = nyDay(Date.now());
+  let weighted = 0;
+  let volume = 0;
+  for (const r of rows) {
+    if (nyDay(Date.parse(r.ts)) !== today) continue;
+    const bar = Math.max(0, Number(r.volume) || 0);
+    if (!(bar > 0)) continue;
+    weighted += r.close * bar;
+    volume += bar;
+  }
+  const vwap = volume > 0 ? weighted / volume : 0;
+  const vwapPct = vwap > 0 && price > 0 ? ((price - vwap) / vwap) * 100 : null;
+  const rsiBit = rsi == null ? "RSI --" : `RSI ${rsi.toFixed(1)}`;
+  const vwapBit = vwapPct == null ? "VWAP --" : `VWAP ${signedPct(vwapPct)}`;
+  const rvolBit = volumeRatio > 0 ? `RVOL ${volumeRatio.toFixed(1)}x` : "RVOL --";
+  return `${rsiBit};${vwapBit};${rvolBit}`;
 }
 
 export function getQuote(symbol: string): QuoteSnap | null {

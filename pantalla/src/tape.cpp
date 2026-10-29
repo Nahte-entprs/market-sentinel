@@ -54,7 +54,20 @@ int tape_apply(const char *line) {
   copy_field(rows[at].symbol, sizeof rows[at].symbol, symbol);
   copy_field(rows[at].price, sizeof rows[at].price, doc["price"] | "");
   copy_field(rows[at].change, sizeof rows[at].change, doc["chg"] | "");
-  copy_field(rows[at].volume, sizeof rows[at].volume, doc["vol"] | "");
+  char packed[160];
+  const char *vol = doc["vol"] | "";
+  strncpy(packed, vol, sizeof packed - 1);
+  packed[sizeof packed - 1] = 0;
+  char *macro = strchr(packed, '|');
+  char *signal = nullptr;
+  if (macro) {
+    *macro++ = 0;
+    signal = strchr(macro, '|');
+    if (signal) *signal++ = 0;
+  }
+  copy_field(rows[at].volume, sizeof rows[at].volume, packed);
+  copy_field(rows[at].macro, sizeof rows[at].macro, macro);
+  copy_field(rows[at].signal, sizeof rows[at].signal, signal);
   rows[at].t0 = doc["t0"] | 0;
   rows[at].t1 = doc["t1"] | 0;
   float level = doc["lv"] | 0.0f;

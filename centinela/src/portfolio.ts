@@ -1,5 +1,5 @@
 import { listTickers, listTickersByCategory } from "./universe.ts";
-import { getQuote, liveTapeQuote, quoteError, readSessionSeries, readTapeVolumeAverage, readVolumeCurve, readVolumeSignal } from "./quotes.ts";
+import { getQuote, liveTapeQuote, quoteError, readSessionSeries, readTapeVolumeAverage, readVolumeCurve, readVolumeSignal, screenMacroText, tapeSignalText } from "./quotes.ts";
 import { publishCartera, publishTape, publishWatchlist } from "./mqtt.ts";
 import { MIN_SLOT_SAMPLES } from "./volume.ts";
 import { watchBand } from "./settings.ts";
@@ -169,6 +169,7 @@ export function publishLiveTape() {
     const shares = compactVol(live?.volume || q?.volume || 0);
     const ratio = q && q.volumeRatio > 0 ? `${q.volumeRatio.toFixed(1)}x prom` : "";
     const vol = shares && ratio ? `${shares}  ${ratio}` : shares || ratio;
+    const tape = [vol, screenMacroText(), tapeSignalText(t.symbol, price && price > 0 ? price : 0, q?.volumeRatio ?? 0)].join("|");
     const series = readSessionSeries(t.symbol);
     const t1 = Math.floor(Date.now() / 1000);
     const t0 = t1 - 7 * 3600;
@@ -201,8 +202,8 @@ export function publishLiveTape() {
     return {
       s: t.symbol,
       p: price ? usd(price) : "n/d",
-      c: changePct == null ? "" : pctFmt(changePct),
-      v: vol,
+      c: changePct == null ? "" : pctFmt(changePct, 2),
+      v: tape,
       t0,
       t1,
       lv: t.tape_level && t.tape_level > 0 ? Math.round(t.tape_level * 100) / 100 : undefined,
