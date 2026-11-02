@@ -79,7 +79,7 @@ static void ingest(const char *line, bool from_ble) {
         if (row && row->t1 > newest) newest = row->t1;
       }
       if (newest > 0) ui_set_clock(newest);
-      ui_reload();
+      ui_reload_soon();
     }
     Serial.printf("[cinta] %s\n", tape_count() ? tape_at(tape_count() - 1)->symbol : "?");
     if (from_ble) ble_ack("ok\n");

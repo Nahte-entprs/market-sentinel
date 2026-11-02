@@ -8,6 +8,7 @@ object Prefs {
     private const val ADDRESS = "address"
     private const val HA_URL = "ha_url"
     private const val HA_TOKEN = "ha_token"
+    private const val BATTERY_ASKED = "battery_asked"
 
     fun enabled(context: Context): Boolean =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(ENABLED, false)
@@ -35,5 +36,12 @@ object Prefs {
 
     fun setHaToken(context: Context, token: String) {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(HA_TOKEN, token.trim()).apply()
+    }
+
+    fun batteryAsked(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(BATTERY_ASKED, false)
+
+    fun setBatteryAsked(context: Context, asked: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(BATTERY_ASKED, asked).apply()
     }
 }

@@ -3,8 +3,10 @@ package dev.centinela.pantalla
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -34,8 +36,14 @@ class MainActivity : AppCompatActivity() {
         binding.bridgeSwitch.setOnCheckedChangeListener { _, on ->
             Prefs.setEnabled(this, on)
             val intent = Intent(this, BridgeService::class.java)
-            if (on) ContextCompat.startForegroundService(this, intent) else stopService(intent)
+            if (on) {
+                ContextCompat.startForegroundService(this, intent)
+                askBattery()
+            } else {
+                stopService(intent)
+            }
         }
+        if (Prefs.enabled(this)) askBattery()
         binding.notifButton.setOnClickListener {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
@@ -81,4 +89,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun granted(permission: String): Boolean =
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun askBattery() {
+        if (Build.VERSION.SDK_INT < 23) return
+        val pm = getSystemService(PowerManager::class.java) ?: return
+        if (pm.isIgnoringBatteryOptimizations(packageName)) return
+        if (Prefs.batteryAsked(this)) return
+        Prefs.setBatteryAsked(this, true)
+        val intent = Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:$packageName"),
+        )
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+        }
+    }
 }

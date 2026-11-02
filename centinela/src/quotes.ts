@@ -771,8 +771,20 @@ export function threeDayTrend(symbol: string): { pct: number; dir: 1 | -1 } | nu
   return { pct: last3.reduce((a, b) => a + b, 0), dir: allPos ? 1 : -1 };
 }
 
+function signedSigPct(n: number, sig: number) {
+  const sign = n > 0 ? "+" : n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  if (!(abs > 0) || !Number.isFinite(abs)) return `${sign}0%`;
+  const exp = Math.floor(Math.log10(abs) + 1e-10);
+  const rounded = Math.round(abs / 10 ** (exp - (sig - 1))) * 10 ** (exp - (sig - 1));
+  const exp2 = Math.floor(Math.log10(rounded) + 1e-10);
+  const decimals = Math.max(0, sig - 1 - exp2);
+  const text = decimals > 0 ? rounded.toFixed(decimals) : String(Math.round(rounded));
+  return `${sign}${text}%`;
+}
+
 function signedPct(n: number) {
-  return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+  return signedSigPct(n, 1);
 }
 
 const SCREEN_MACRO: { symbol: string; label: string }[] = [
@@ -788,7 +800,7 @@ export function screenMacroText(): string {
   return SCREEN_MACRO.map(({ symbol, label }) => {
     const q = getQuote(symbol);
     if (!q || !q.changeTrusted) return `${label} --`;
-    return `${label} ${signedPct(q.changePct)}`;
+    return `${label} ${signedSigPct(q.changePct, 3)}`;
   }).join(";");
 }
 

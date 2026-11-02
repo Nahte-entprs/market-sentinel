@@ -1,8 +1,11 @@
 package dev.centinela.pantalla
 
 import android.content.Context
+import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.PowerManager
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -13,6 +16,8 @@ object TapePoller {
     private val handler by lazy { Handler(thread.looper) }
     private var started = false
     private var app: Context? = null
+    private var wake: PowerManager.WakeLock? = null
+    private var wifi: WifiManager.WifiLock? = null
 
     private val tick = object : Runnable {
         override fun run() {
@@ -28,12 +33,43 @@ object TapePoller {
             thread.start()
         }
         handler.removeCallbacks(tick)
+        holdAwake(context.applicationContext)
         handler.post(tick)
     }
 
     fun stop() {
         if (!started) return
         handler.removeCallbacks(tick)
+        releaseAwake()
+    }
+
+    private fun holdAwake(context: Context) {
+        if (wake?.isHeld != true) {
+            val pm = context.getSystemService(PowerManager::class.java) ?: return
+            wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "centinela:tape").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }
+        if (wifi?.isHeld == true) return
+        val wm = context.getSystemService(WifiManager::class.java) ?: return
+        val mode = if (Build.VERSION.SDK_INT >= 29) {
+            WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+        } else {
+            @Suppress("DEPRECATION")
+            WifiManager.WIFI_MODE_FULL_HIGH_PERF
+        }
+        wifi = wm.createWifiLock(mode, "centinela:tape").apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    private fun releaseAwake() {
+        wake?.let { if (it.isHeld) it.release() }
+        wake = null
+        wifi?.let { if (it.isHeld) it.release() }
+        wifi = null
     }
 
     private fun fetch() {

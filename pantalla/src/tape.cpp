@@ -26,7 +26,7 @@ int tape_apply(const char *line) {
   uint32_t now = millis();
   int kept = 0;
   for (int i = 0; i < count; i++) {
-    if (strcmp(rows[i].symbol, symbol) != 0 && now - seen_ms[i] > 30000) continue;
+    if (strcmp(rows[i].symbol, symbol) != 0 && now - seen_ms[i] > 180000) continue;
     if (kept != i) {
       rows[kept] = rows[i];
       seen_ms[kept] = seen_ms[i];

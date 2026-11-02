@@ -40,6 +40,8 @@ static lv_obj_t *d_message = nullptr;
 static int filter = 0;
 static bool link_on = false;
 static bool dirty = true;
+static bool quote_hold = false;
+static uint32_t quote_hold_ms = 0;
 
 static lv_color_t section_color(const char *section) {
   if (strcmp(section, "cartera") == 0) return lv_color_hex(0x3DDC97);
@@ -148,6 +150,24 @@ static float axis_step(float max_abs_pct) {
 
 static void format_step(char *out, size_t n, float step) {
   snprintf(out, n, "\xC2\xB1" "%.0f%%", step);
+}
+
+static void format_sig(char *out, size_t n, float v, int sig) {
+  if (!(v > 0.f) || sig < 1) {
+    snprintf(out, n, "n/d");
+    return;
+  }
+  int expn = (int)floorf(log10f(v) + 1e-5f);
+  float step = powf(10.f, (float)(expn - (sig - 1)));
+  float rounded = roundf(v / step) * step;
+  if (!(rounded > 0.f)) rounded = v;
+  int exp2 = (int)floorf(log10f(rounded) + 1e-5f);
+  int decimals = sig - 1 - exp2;
+  if (decimals < 0) decimals = 0;
+  if (decimals > 6) decimals = 6;
+  char fmt[8];
+  snprintf(fmt, sizeof fmt, "%%.%df", decimals);
+  snprintf(out, n, fmt, (double)rounded);
 }
 
 static int64_t display_mark(int64_t mark) {
@@ -508,6 +528,7 @@ static int tape_index() {
       const TapeRow *row = tape_at(i);
       if (row && strcmp(row->symbol, pinned) == 0) return i;
     }
+    return 0;
   }
   const TapeRow *row = tape_at(0);
   if (row) {
@@ -593,9 +614,9 @@ static lv_color_t metric_color(const char *token) {
   return lv_color_hex(0xC5CBB8);
 }
 
-static void paint_metrics(const char *packed, const char *fallback, int height) {
+static void paint_metrics(const char *packed, const char *fallback, int height, const lv_font_t *font) {
   const char *src = packed && packed[0] ? packed : fallback;
-  char buf[96];
+  char buf[128];
   strncpy(buf, src, sizeof buf - 1);
   buf[sizeof buf - 1] = 0;
   lv_obj_t *row = lv_obj_create(list);
@@ -606,8 +627,9 @@ static void paint_metrics(const char *packed, const char *fallback, int height) 
   lv_obj_set_style_border_width(row, 1, 0);
   lv_obj_set_style_border_color(row, lv_color_hex(0x3C4436), 0);
   lv_obj_set_style_radius(row, 0, 0);
-  lv_obj_set_style_pad_hor(row, 2, 0);
+  lv_obj_set_style_pad_hor(row, 0, 0);
   lv_obj_set_style_pad_ver(row, 0, 0);
+  lv_obj_set_style_pad_column(row, 2, 0);
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
@@ -615,8 +637,9 @@ static void paint_metrics(const char *packed, const char *fallback, int height) 
     char *sep = strchr(p, ';');
     if (sep) *sep = 0;
     lv_obj_t *lb = lv_label_create(row);
+    lv_label_set_long_mode(lb, LV_LABEL_LONG_CLIP);
     lv_label_set_text(lb, p);
-    lv_obj_set_style_text_font(lb, &font_latin_14, 0);
+    lv_obj_set_style_text_font(lb, font, 0);
     lv_obj_set_style_text_color(lb, metric_color(p), 0);
     if (!sep) break;
     p = sep + 1;
@@ -624,7 +647,7 @@ static void paint_metrics(const char *packed, const char *fallback, int height) 
 }
 
 static void paint_live(const TapeRow *q) {
-  paint_metrics(q->macro, "SPX --;NDX --;CL --;10Y --;VIX --", 24);
+  paint_metrics(q->macro, "SPX --;NDX --;CL --;10Y --;VIX --", 20, &lv_font_montserrat_12);
   bool up = q->change[0] == '+';
   bool down = q->change[0] == '-';
   lv_color_t ink = up ? lv_color_hex(0x3DDC97) : down ? lv_color_hex(0xFF6B6B) : lv_color_hex(0xF2F0E6);
@@ -666,8 +689,19 @@ static void paint_live(const TapeRow *q) {
   lv_obj_set_style_text_font(sym, &font_latin_18, 0);
   lv_obj_set_style_text_color(sym, ink, 0);
 
+  float cur = 0;
+  int best = -1;
+  for (int i = 0; i < q->n; i++) {
+    if ((int)q->slot[i] >= best) {
+      best = q->slot[i];
+      cur = q->px[i];
+    }
+  }
+  char price_txt[16];
+  if (cur > 0) format_sig(price_txt, sizeof price_txt, cur, 4);
+  else snprintf(price_txt, sizeof price_txt, "%s", q->price[0] ? q->price : "n/d");
   char summary[48];
-  snprintf(summary, sizeof summary, "%s  %s", q->price[0] ? q->price : "n/d", q->change[0] ? q->change : "—");
+  snprintf(summary, sizeof summary, "%s  %s", price_txt, q->change[0] ? q->change : "—");
   lv_obj_t *px = lv_label_create(left);
   lv_label_set_text(px, summary);
   lv_obj_set_style_text_font(px, &font_latin_16, 0);
@@ -710,24 +744,18 @@ static void paint_live(const TapeRow *q) {
   lv_obj_center(span_lbl);
 
   if (q->level > 0) {
-    float cur = 0;
-    int best = -1;
-    for (int i = 0; i < q->n; i++) {
-      if ((int)q->slot[i] >= best) {
-        best = q->slot[i];
-        cur = q->px[i];
-      }
-    }
-    float pct = q->level > 0 ? (cur - q->level) / q->level * 100.f : 0;
+    float pct = (cur - q->level) / q->level * 100.f;
+    char level_txt[16];
+    format_sig(level_txt, sizeof level_txt, q->level, 4);
     char extra[40];
-    snprintf(extra, sizeof extra, "%.2f  %+.2f%%", q->level, pct);
+    snprintf(extra, sizeof extra, "%s  %+.2f%%", level_txt, pct);
     lv_obj_t *nl = lv_label_create(head);
     lv_label_set_text(nl, extra);
     lv_obj_set_style_text_font(nl, &font_latin_14, 0);
     lv_obj_set_style_text_color(nl, lv_color_hex(0xD4A6FF), 0);
   }
 
-  paint_metrics(q->signal, "RSI --;VWAP --;RVOL --", 22);
+  paint_metrics(q->signal, "RSI --;VWAP --;RVOL --", 22, &font_latin_14);
 
   if (q->n < 2) {
     lv_obj_t *empty = lv_label_create(list);
@@ -1374,6 +1402,11 @@ static void refresh_battery() {
 
 void ui_reload() { dirty = true; }
 
+void ui_reload_soon() {
+  quote_hold = true;
+  quote_hold_ms = lv_tick_get();
+}
+
 void ui_note_quote() { last_quote_ms = lv_tick_get(); }
 
 void ui_set_clock(int32_t unix_sec) {
@@ -1420,9 +1453,13 @@ void ui_pump() {
     batt_pct = sample.pct;
     refresh_battery();
   }
+  if (quote_hold && lv_tick_elaps(quote_hold_ms) >= 1000) {
+    quote_hold = false;
+    dirty = true;
+  }
   if (dirty) rebuild();
   if (!stale_box) return;
-  bool late = last_quote_ms == 0 ? now > 20000 : now - last_quote_ms > 15000;
+  bool late = last_quote_ms == 0 ? now > 20000 : now - last_quote_ms > 22000;
   if (!late) {
     if (!lv_obj_has_flag(stale_box, LV_OBJ_FLAG_HIDDEN)) lv_obj_add_flag(stale_box, LV_OBJ_FLAG_HIDDEN);
     return;
