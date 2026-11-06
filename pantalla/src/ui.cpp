@@ -1,5 +1,6 @@
 #include "ui.h"
 
+#include "backlight.h"
 #include "battery.h"
 #include "config.h"
 #include "store.h"
@@ -31,7 +32,12 @@ static lv_obj_t *drawer = nullptr;
 static lv_obj_t *catcher = nullptr;
 static lv_obj_t *spin_box = nullptr;
 static lv_obj_t *spin_value = nullptr;
+static lv_obj_t *cfg_box = nullptr;
+static lv_obj_t *cfg_duty = nullptr;
+static lv_obj_t *cfg_mode = nullptr;
 static lv_obj_t *list = nullptr;
+static lv_obj_t *inbox_badge = nullptr;
+static lv_obj_t *inbox_count = nullptr;
 static lv_obj_t *detail = nullptr;
 static lv_obj_t *d_section = nullptr;
 static lv_obj_t *d_time = nullptr;
@@ -152,22 +158,53 @@ static void format_step(char *out, size_t n, float step) {
   snprintf(out, n, "\xC2\xB1" "%.0f%%", step);
 }
 
-static void format_sig(char *out, size_t n, float v, int sig) {
-  if (!(v > 0.f) || sig < 1) {
+static void format_cents(char *out, size_t n, float v) {
+  if (!(v > 0.f)) {
     snprintf(out, n, "n/d");
     return;
   }
-  int expn = (int)floorf(log10f(v) + 1e-5f);
-  float step = powf(10.f, (float)(expn - (sig - 1)));
-  float rounded = roundf(v / step) * step;
-  if (!(rounded > 0.f)) rounded = v;
-  int exp2 = (int)floorf(log10f(rounded) + 1e-5f);
-  int decimals = sig - 1 - exp2;
-  if (decimals < 0) decimals = 0;
-  if (decimals > 6) decimals = 6;
-  char fmt[8];
-  snprintf(fmt, sizeof fmt, "%%.%df", decimals);
-  snprintf(out, n, fmt, (double)rounded);
+  snprintf(out, n, "%.2f", (double)v);
+}
+
+// The phone forwards percentages already rounded. Reprint them with hundredths
+// so 0.480% and 0.0400% show as 0.48% and 0.04%.
+static void rewrite_pcts(char *buf, size_t cap) {
+  char out[160];
+  size_t o = 0;
+  const char *p = buf;
+  while (*p && o + 1 < sizeof out) {
+    const char *semi = strchr(p, ';');
+    size_t n = semi ? (size_t)(semi - p) : strlen(p);
+    const char *mark = (const char *)memchr(p, '%', n);
+    const char *num = mark;
+    while (num > p && (num[-1] == '.' || (num[-1] >= '0' && num[-1] <= '9'))) num--;
+    bool pct = mark && num < mark && (num == p || num[-1] == ' ' || num[-1] == '+' || num[-1] == '-');
+    if (num > p && (num[-1] == '+' || num[-1] == '-')) num--;
+    if (!pct) {
+      if (o + n + (semi ? 1 : 0) >= sizeof out) break;
+      memcpy(out + o, p, n);
+      o += n;
+    } else {
+      size_t head = (size_t)(num - p);
+      if (o + head >= sizeof out) break;
+      memcpy(out + o, p, head);
+      o += head;
+      float v = strtof(num, nullptr);
+      char bit[16];
+      int wrote = snprintf(bit, sizeof bit, "%+.2f%%", (double)v);
+      if (wrote < 0) wrote = 0;
+      if (o + (size_t)wrote >= sizeof out) break;
+      memcpy(out + o, bit, (size_t)wrote);
+      o += (size_t)wrote;
+    }
+    if (!semi) break;
+    if (o + 1 >= sizeof out) break;
+    out[o++] = ';';
+    p = semi + 1;
+  }
+  out[o] = 0;
+  strncpy(buf, out, cap - 1);
+  buf[cap - 1] = 0;
 }
 
 static int64_t display_mark(int64_t mark) {
@@ -614,11 +651,12 @@ static lv_color_t metric_color(const char *token) {
   return lv_color_hex(0xC5CBB8);
 }
 
-static void paint_metrics(const char *packed, const char *fallback, int height, const lv_font_t *font) {
+static void paint_metrics(const char *packed, const char *fallback, int height, const lv_font_t *font, bool pcts) {
   const char *src = packed && packed[0] ? packed : fallback;
   char buf[128];
   strncpy(buf, src, sizeof buf - 1);
   buf[sizeof buf - 1] = 0;
+  if (pcts) rewrite_pcts(buf, sizeof buf);
   lv_obj_t *row = lv_obj_create(list);
   lv_obj_set_width(row, lv_pct(100));
   lv_obj_set_height(row, height);
@@ -647,7 +685,7 @@ static void paint_metrics(const char *packed, const char *fallback, int height, 
 }
 
 static void paint_live(const TapeRow *q) {
-  paint_metrics(q->macro, "SPX --;NDX --;CL --;10Y --;VIX --", 20, &lv_font_montserrat_12);
+  paint_metrics(q->macro, "SPX --;NDX --;CL --;10Y --;VIX --", 20, &lv_font_montserrat_12, true);
   bool up = q->change[0] == '+';
   bool down = q->change[0] == '-';
   lv_color_t ink = up ? lv_color_hex(0x3DDC97) : down ? lv_color_hex(0xFF6B6B) : lv_color_hex(0xF2F0E6);
@@ -698,10 +736,13 @@ static void paint_live(const TapeRow *q) {
     }
   }
   char price_txt[16];
-  if (cur > 0) format_sig(price_txt, sizeof price_txt, cur, 4);
+  if (cur > 0) format_cents(price_txt, sizeof price_txt, cur);
   else snprintf(price_txt, sizeof price_txt, "%s", q->price[0] ? q->price : "n/d");
+  char change_txt[24];
+  snprintf(change_txt, sizeof change_txt, "%s", q->change[0] ? q->change : "—");
+  if (q->change[0]) rewrite_pcts(change_txt, sizeof change_txt);
   char summary[48];
-  snprintf(summary, sizeof summary, "%s  %s", price_txt, q->change[0] ? q->change : "—");
+  snprintf(summary, sizeof summary, "%s  %s", price_txt, change_txt);
   lv_obj_t *px = lv_label_create(left);
   lv_label_set_text(px, summary);
   lv_obj_set_style_text_font(px, &font_latin_16, 0);
@@ -730,6 +771,14 @@ static void paint_live(const TapeRow *q) {
   lv_obj_add_event_cb(check, on_check, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(check, on_check, LV_EVENT_LONG_PRESSED, nullptr);
 
+  lv_obj_t *gap = lv_obj_create(left);
+  lv_obj_set_size(gap, 12, 8);
+  lv_obj_set_style_bg_opa(gap, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(gap, 0, 0);
+  lv_obj_set_style_pad_all(gap, 0, 0);
+  lv_obj_clear_flag(gap, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(gap, LV_OBJ_FLAG_SCROLLABLE);
+
   lv_obj_t *span_btn = lv_btn_create(left);
   lv_obj_set_size(span_btn, 46, 22);
   lv_obj_set_style_radius(span_btn, 6, 0);
@@ -746,7 +795,7 @@ static void paint_live(const TapeRow *q) {
   if (q->level > 0) {
     float pct = (cur - q->level) / q->level * 100.f;
     char level_txt[16];
-    format_sig(level_txt, sizeof level_txt, q->level, 4);
+    format_cents(level_txt, sizeof level_txt, q->level);
     char extra[40];
     snprintf(extra, sizeof extra, "%s  %+.2f%%", level_txt, pct);
     lv_obj_t *nl = lv_label_create(head);
@@ -755,7 +804,7 @@ static void paint_live(const TapeRow *q) {
     lv_obj_set_style_text_color(nl, lv_color_hex(0xD4A6FF), 0);
   }
 
-  paint_metrics(q->signal, "RSI --;VWAP --;RVOL --", 22, &font_latin_14);
+  paint_metrics(q->signal, "RSI --;VWAP --;RVOL --", 22, &font_latin_14, true);
 
   if (q->n < 2) {
     lv_obj_t *empty = lv_label_create(list);
@@ -987,8 +1036,110 @@ static void on_filter(lv_event_t *e) {
   dirty = true;
 }
 
+static const char *BL_MODE_NAME[] = {"Normal", "Siempre alto", "Siempre bajo"};
+
+static void refresh_cfg() {
+  if (cfg_duty) lv_label_set_text_fmt(cfg_duty, "%d", backlight_sleep_duty());
+  if (cfg_mode) {
+    int m = backlight_mode();
+    if (m < 0 || m > 2) m = 0;
+    lv_label_set_text(cfg_mode, BL_MODE_NAME[m]);
+  }
+}
+
+static void on_cfg_open(lv_event_t *) {
+  set_drawer(false);
+  refresh_cfg();
+  backlight_hold(true);
+  if (cfg_box) {
+    lv_obj_clear_flag(cfg_box, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(cfg_box);
+  }
+}
+
+static void on_cfg_close(lv_event_t *) {
+  if (cfg_box) lv_obj_add_flag(cfg_box, LV_OBJ_FLAG_HIDDEN);
+  backlight_hold(false);
+}
+
+static void on_cfg_duty(lv_event_t *e) {
+  backlight_set_sleep(backlight_sleep_duty() + (int)(intptr_t)lv_event_get_user_data(e));
+  refresh_cfg();
+}
+
+static void on_cfg_mode(lv_event_t *) {
+  backlight_cycle_mode();
+  refresh_cfg();
+}
+
 static void on_back(lv_event_t *) {
   if (detail) lv_obj_add_flag(detail, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void refresh_badge() {
+  if (!inbox_badge || !inbox_count) return;
+  int n = store_unread();
+  if (n <= 0) {
+    lv_obj_add_flag(inbox_badge, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  lv_obj_clear_flag(inbox_badge, LV_OBJ_FLAG_HIDDEN);
+  lv_label_set_text_fmt(inbox_count, "%d", n > 99 ? 99 : n);
+}
+
+static void on_read_all(lv_event_t *) {
+  if (!store_mark_all_read()) return;
+  dirty = true;
+}
+
+static bool clock_stamp(const char *s) {
+  for (int i = 0; i < 8; i++) {
+    if (i == 2 || i == 5) {
+      if (s[i] != ':') return false;
+    } else if (s[i] < '0' || s[i] > '9') {
+      return false;
+    }
+  }
+  return s[8] == ' ' && s[9];
+}
+
+static const char *lounge_clock(const char *title, char *out, size_t cap) {
+  if (!title || !clock_stamp(title)) return nullptr;
+  snprintf(out, cap, "%.8s", title);
+  return title + 9;
+}
+
+static void paint_quote(lv_obj_t *card, const char *text, uint32_t color) {
+  lv_obj_t *lb = lv_label_create(card);
+  lv_label_set_text(lb, text);
+  lv_obj_set_width(lb, lv_pct(100));
+  lv_label_set_long_mode(lb, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(lb, &font_latin_14, 0);
+  lv_obj_set_style_text_color(lb, lv_color_hex(color), 0);
+}
+
+static void paint_lounge_body(lv_obj_t *card, const char *message) {
+  const char *p = message ? message : "";
+  int quotes = 0;
+  while (p[0] == '>' && p[1] == ' ') {
+    const char *nl = strchr(p, '\n');
+    char line[180];
+    size_t n = nl ? (size_t)(nl - p) : strlen(p);
+    if (n >= sizeof line) n = sizeof line - 1;
+    memcpy(line, p + 2, n > 2 ? n - 2 : 0);
+    line[n > 2 ? n - 2 : 0] = 0;
+    paint_quote(card, line, quotes == 0 ? 0x7E8678 : 0xC5CBB8);
+    quotes++;
+    if (!nl) return;
+    p = nl + 1;
+  }
+  if (!p[0]) return;
+  lv_obj_t *body = lv_label_create(card);
+  lv_label_set_text(body, p);
+  lv_obj_set_width(body, lv_pct(100));
+  lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(body, &font_latin_16, 0);
+  lv_obj_set_style_text_color(body, lv_color_hex(0xF2F0E6), 0);
 }
 
 static void paint_card(const Notice *n) {
@@ -1023,8 +1174,9 @@ static void paint_card(const Notice *n) {
   lv_obj_set_style_text_font(sec, &font_latin_14, 0);
   lv_obj_set_style_text_color(sec, section_color(n->section), 0);
 
-  char hm[8] = "--:--";
-  format_hhmm(n->at, TZ_OFFSET_MIN, hm);
+  char hm[16] = "--:--";
+  const char *lounge_user = lounge_clock(n->title, hm, sizeof hm);
+  if (!lounge_user) format_hhmm(n->at, TZ_OFFSET_MIN, hm);
   lv_obj_t *when = lv_label_create(row);
   lv_label_set_text(when, hm);
   lv_obj_set_style_text_font(when, &font_latin_14, 0);
@@ -1039,6 +1191,18 @@ static void paint_card(const Notice *n) {
     lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
   }
 
+  if (lounge_user) {
+    lv_label_set_text(sec, "Lounge");
+    lv_obj_t *who = lv_label_create(card);
+    lv_label_set_text(who, lounge_user);
+    lv_obj_set_width(who, lv_pct(100));
+    lv_label_set_long_mode(who, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_font(who, &font_latin_14, 0);
+    lv_obj_set_style_text_color(who, lv_color_hex(0xE8D7A8), 0);
+    paint_lounge_body(card, n->message);
+    return;
+  }
+
   lv_obj_t *title = lv_label_create(card);
   lv_label_set_text(title, n->title);
   lv_obj_set_width(title, lv_pct(100));
@@ -1048,6 +1212,7 @@ static void paint_card(const Notice *n) {
 }
 
 static void rebuild() {
+  refresh_badge();
   if (!list) return;
   cap_label = nullptr;
   vol_label = nullptr;
@@ -1074,6 +1239,18 @@ static void rebuild() {
     return;
   }
   lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t *read_btn = lv_btn_create(list);
+  lv_obj_set_size(read_btn, 92, 26);
+  lv_obj_set_style_radius(read_btn, 8, 0);
+  lv_obj_set_style_bg_color(read_btn, lv_color_hex(0xC6A15B), 0);
+  lv_obj_set_style_shadow_width(read_btn, 0, 0);
+  lv_obj_set_style_pad_all(read_btn, 0, 0);
+  lv_obj_add_event_cb(read_btn, on_read_all, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *read_lbl = lv_label_create(read_btn);
+  lv_label_set_text(read_lbl, "Le\xC3\xAD" "do");
+  lv_obj_set_style_text_font(read_lbl, &font_latin_14, 0);
+  lv_obj_set_style_text_color(read_lbl, lv_color_hex(0x1A1408), 0);
+  lv_obj_center(read_lbl);
   const char *want = FILTER_ID[filter];
   int shown = 0;
   for (int i = 0; i < store_count(); i++) {
@@ -1139,6 +1316,29 @@ void ui_init() {
   lv_obj_set_style_text_font(menu_lbl, &font_latin_14, 0);
   lv_obj_set_style_text_color(menu_lbl, lv_color_hex(0xF2F0E6), 0);
   lv_obj_center(menu_lbl);
+
+  inbox_badge = lv_obj_create(bar);
+  lv_obj_set_size(inbox_badge, 46, 22);
+  lv_obj_align(inbox_badge, LV_ALIGN_LEFT_MID, 82, 0);
+  lv_obj_set_style_bg_color(inbox_badge, lv_color_hex(0xC6A15B), 0);
+  lv_obj_set_style_radius(inbox_badge, 11, 0);
+  lv_obj_set_style_border_width(inbox_badge, 0, 0);
+  lv_obj_set_style_pad_all(inbox_badge, 0, 0);
+  lv_obj_clear_flag(inbox_badge, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(inbox_badge, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(inbox_badge, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_t *inbox_dot = lv_obj_create(inbox_badge);
+  lv_obj_set_size(inbox_dot, 8, 8);
+  lv_obj_align(inbox_dot, LV_ALIGN_LEFT_MID, 6, 0);
+  lv_obj_set_style_radius(inbox_dot, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(inbox_dot, lv_color_hex(0x1A1408), 0);
+  lv_obj_set_style_border_width(inbox_dot, 0, 0);
+  lv_obj_clear_flag(inbox_dot, LV_OBJ_FLAG_CLICKABLE);
+  inbox_count = lv_label_create(inbox_badge);
+  lv_label_set_text(inbox_count, "0");
+  lv_obj_set_style_text_font(inbox_count, &font_latin_14, 0);
+  lv_obj_set_style_text_color(inbox_count, lv_color_hex(0x1A1408), 0);
+  lv_obj_align(inbox_count, LV_ALIGN_RIGHT_MID, -6, 0);
 
   stale_box = lv_obj_create(bar);
   lv_obj_set_size(stale_box, LV_SIZE_CONTENT, 22);
@@ -1237,7 +1437,7 @@ void ui_init() {
 
   drawer = lv_obj_create(scr);
   lv_obj_set_pos(drawer, 6, 36);
-  lv_obj_set_size(drawer, 156, 108);
+  lv_obj_set_size(drawer, 164, 152);
   lv_obj_set_style_bg_color(drawer, lv_color_hex(0x171B13), 0);
   lv_obj_set_style_border_color(drawer, lv_color_hex(0xC6A15B), 0);
   lv_obj_set_style_border_width(drawer, 1, 0);
@@ -1249,7 +1449,7 @@ void ui_init() {
   lv_obj_add_flag(drawer, LV_OBJ_FLAG_HIDDEN);
   for (int i = 0; i < 2; i++) {
     lv_obj_t *btn = lv_btn_create(drawer);
-    lv_obj_set_size(btn, 120, 36);
+    lv_obj_set_size(btn, 140, 36);
     lv_obj_set_style_radius(btn, 8, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_set_style_pad_all(btn, 0, 0);
@@ -1260,6 +1460,18 @@ void ui_init() {
     lv_obj_center(lbl);
     filter_btns[i] = btn;
   }
+  lv_obj_t *cfg_btn = lv_btn_create(drawer);
+  lv_obj_set_size(cfg_btn, 140, 36);
+  lv_obj_set_style_radius(cfg_btn, 8, 0);
+  lv_obj_set_style_bg_color(cfg_btn, lv_color_hex(0x1C2118), 0);
+  lv_obj_set_style_shadow_width(cfg_btn, 0, 0);
+  lv_obj_set_style_pad_all(cfg_btn, 0, 0);
+  lv_obj_add_event_cb(cfg_btn, on_cfg_open, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *cfg_btn_lbl = lv_label_create(cfg_btn);
+  lv_label_set_text(cfg_btn_lbl, "Ajustes");
+  lv_obj_set_style_text_font(cfg_btn_lbl, &font_latin_14, 0);
+  lv_obj_set_style_text_color(cfg_btn_lbl, lv_color_hex(0xF2F0E6), 0);
+  lv_obj_center(cfg_btn_lbl);
   style_filters();
 
   spin_box = lv_obj_create(scr);
@@ -1319,6 +1531,68 @@ void ui_init() {
   lv_obj_set_style_text_color(done_lbl, lv_color_hex(0x1A1408), 0);
   lv_obj_set_style_text_font(done_lbl, &font_latin_14, 0);
   lv_obj_center(done_lbl);
+
+  cfg_box = lv_obj_create(scr);
+  lv_obj_set_size(cfg_box, 236, 156);
+  lv_obj_align(cfg_box, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_style_bg_color(cfg_box, lv_color_hex(0x1C2118), 0);
+  lv_obj_set_style_border_color(cfg_box, lv_color_hex(0xC6A15B), 0);
+  lv_obj_set_style_border_width(cfg_box, 1, 0);
+  lv_obj_set_style_radius(cfg_box, 12, 0);
+  lv_obj_set_style_pad_all(cfg_box, 0, 0);
+  lv_obj_clear_flag(cfg_box, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(cfg_box, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_t *cfg_title = lv_label_create(cfg_box);
+  lv_label_set_text(cfg_title, "Brillo en reposo");
+  lv_obj_set_style_text_font(cfg_title, &font_latin_14, 0);
+  lv_obj_set_style_text_color(cfg_title, lv_color_hex(0x9AA392), 0);
+  lv_obj_align(cfg_title, LV_ALIGN_TOP_MID, 0, 8);
+  lv_obj_t *cfg_minus = lv_btn_create(cfg_box);
+  lv_obj_set_size(cfg_minus, 44, 28);
+  lv_obj_align(cfg_minus, LV_ALIGN_TOP_LEFT, 16, 36);
+  lv_obj_set_style_shadow_width(cfg_minus, 0, 0);
+  lv_obj_add_event_cb(cfg_minus, on_cfg_duty, LV_EVENT_CLICKED, (void *)(intptr_t)-4);
+  lv_obj_t *cfg_minus_lbl = lv_label_create(cfg_minus);
+  lv_label_set_text(cfg_minus_lbl, "-");
+  lv_obj_center(cfg_minus_lbl);
+  cfg_duty = lv_label_create(cfg_box);
+  lv_obj_set_width(cfg_duty, 72);
+  lv_label_set_text_fmt(cfg_duty, "%d", backlight_sleep_duty());
+  lv_obj_set_style_text_font(cfg_duty, &font_latin_18, 0);
+  lv_obj_set_style_text_color(cfg_duty, lv_color_hex(0xF2F0E6), 0);
+  lv_obj_set_style_text_align(cfg_duty, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(cfg_duty, LV_ALIGN_TOP_MID, 0, 38);
+  lv_obj_t *cfg_plus = lv_btn_create(cfg_box);
+  lv_obj_set_size(cfg_plus, 44, 28);
+  lv_obj_align(cfg_plus, LV_ALIGN_TOP_RIGHT, -16, 36);
+  lv_obj_set_style_shadow_width(cfg_plus, 0, 0);
+  lv_obj_add_event_cb(cfg_plus, on_cfg_duty, LV_EVENT_CLICKED, (void *)(intptr_t)4);
+  lv_obj_t *cfg_plus_lbl = lv_label_create(cfg_plus);
+  lv_label_set_text(cfg_plus_lbl, "+");
+  lv_obj_center(cfg_plus_lbl);
+  lv_obj_t *mode_btn = lv_btn_create(cfg_box);
+  lv_obj_set_size(mode_btn, 204, 30);
+  lv_obj_align(mode_btn, LV_ALIGN_TOP_MID, 0, 76);
+  lv_obj_set_style_bg_color(mode_btn, lv_color_hex(0x12140F), 0);
+  lv_obj_set_style_shadow_width(mode_btn, 0, 0);
+  lv_obj_add_event_cb(mode_btn, on_cfg_mode, LV_EVENT_CLICKED, nullptr);
+  cfg_mode = lv_label_create(mode_btn);
+  lv_label_set_text(cfg_mode, BL_MODE_NAME[0]);
+  lv_obj_set_style_text_font(cfg_mode, &font_latin_14, 0);
+  lv_obj_set_style_text_color(cfg_mode, lv_color_hex(0xF2F0E6), 0);
+  lv_obj_center(cfg_mode);
+  refresh_cfg();
+  lv_obj_t *cfg_done = lv_btn_create(cfg_box);
+  lv_obj_set_size(cfg_done, 88, 28);
+  lv_obj_set_style_bg_color(cfg_done, lv_color_hex(0xC6A15B), 0);
+  lv_obj_set_style_shadow_width(cfg_done, 0, 0);
+  lv_obj_align(cfg_done, LV_ALIGN_BOTTOM_MID, 0, -8);
+  lv_obj_add_event_cb(cfg_done, on_cfg_close, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *cfg_done_lbl = lv_label_create(cfg_done);
+  lv_label_set_text(cfg_done_lbl, "Listo");
+  lv_obj_set_style_text_color(cfg_done_lbl, lv_color_hex(0x1A1408), 0);
+  lv_obj_set_style_text_font(cfg_done_lbl, &font_latin_14, 0);
+  lv_obj_center(cfg_done_lbl);
 
   detail = lv_obj_create(scr);
   lv_obj_set_size(detail, SCREEN_W, SCREEN_H);

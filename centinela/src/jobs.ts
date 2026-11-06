@@ -8,8 +8,8 @@ import { ingestFeeds, recentNews } from "./news.ts";
 import { extractEntities, lexiconPolarity, matchThesis } from "./entities.ts";
 import { tickersFromEntities } from "./graph.ts";
 import { computeRegime, confidenceFrom, currentRegime, scoreThreshold } from "./regime.ts";
-import { collectOtherSubs, collectWsbDaily, ensureRedditTables, liveTickers } from "./reddit-social.ts";
-import { mqttConnected, publishIdeas, publishJob, publishRegime, publishSocial, publishStatus } from "./mqtt.ts";
+import { collectLoungeNotices, collectOtherSubs, collectWsbDaily, ensureRedditTables, liveTickers } from "./reddit-social.ts";
+import { mqttConnected, publishIdeas, publishJob, publishNotify, publishRegime, publishSocial, publishStatus } from "./mqtt.ts";
 import { armJob, clearPhase, disarmJob, loopLag, onPulse, phaseOf, runInLane, setPhase, stillRunning, type Lane } from "./pulse.ts";
 import { listPositions, publishCarteraState, publishLiveTape } from "./portfolio.ts";
 import { loadSocialRun, saveSocialRun } from "./social-store.ts";
@@ -595,6 +595,21 @@ async function redditSubsJob() {
   return redditNote(run, pushed);
 }
 
+async function loungeJob() {
+  const { note, notices } = await collectLoungeNotices();
+  for (const n of notices) {
+    publishNotify({
+      section: "reddit",
+      title: n.title,
+      message: n.message,
+      url: n.url,
+      at: n.at,
+      tag: n.id,
+    });
+  }
+  return note;
+}
+
 async function regimeJob() {
   const r = computeRegime();
   publishRegime(r, parseJson(getSetting("regime_why", "{}"), {}));
@@ -811,6 +826,13 @@ export const JOBS: JobDef[] = [
     cadenceMs: () => 20 * 60_000,
     run: redditSubsJob,
   },
+  {
+    id: "reddit.lounge",
+    name: "The Lounge",
+    description: "Cada comentario nuevo del foro diario de r/pennystocks",
+    cadenceMs: () => 45_000,
+    run: loungeJob,
+  },
   { id: "ideas.eval", name: "Ideas", description: "Apoyar / refutar claims", cadenceMs: () => 20 * 60_000, run: ideasJob },
   { id: "digest.brief", name: "Briefing 2h", description: "Resumen si no hubo HIGH", cadenceMs: () => 2 * 60 * 60_000, run: digestJob },
   { id: "reaction.snap", name: "Reacción T+", description: "T+5m / 30m / 1h / 1d", cadenceMs: () => 5 * 60_000, run: reactionJob },
@@ -833,6 +855,7 @@ const BUDGET_MS: Record<string, number> = {
   "market.sentiment": 3 * 60_000,
   "reddit.rising": 3 * 60_000,
   "reddit.subs": 8 * 60_000,
+  "reddit.lounge": 40_000,
   "ideas.eval": 4 * 60_000,
   "digest.brief": 60_000,
 };
@@ -1040,12 +1063,36 @@ async function runTapeLoop() {
   }
 }
 
+async function runLoungeLoop() {
+  const def = JOBS.find((j) => j.id === "reddit.lounge");
+  if (!def) return;
+  const started = Date.now();
+  try {
+    safeSetJob(def.id, "running", null, null);
+    safePublish(def);
+    const note = await def.run();
+    const secs = ((Date.now() - started) / 1000).toFixed(1);
+    console.log(`[job] lounge ok ${secs}s · ${note}`);
+    safeSetJob(def.id, "ok", null, note);
+    lastOk.set(def.id, Date.now());
+  } catch (err) {
+    const msg = (err as Error).message.slice(0, 240);
+    console.error(`[job] lounge error · ${msg}`);
+    safeSetJob(def.id, "error", msg, null);
+  } finally {
+    safePublish(def);
+    const wait = Math.max(1000, def.cadenceMs() - (Date.now() - started));
+    setTimeout(() => void runLoungeLoop(), wait);
+  }
+}
+
 export function startScheduler() {
   onPulse(logHeartbeat);
   setTimeout(() => void runTapeLoop(), 4000);
+  setTimeout(() => void runLoungeLoop(), 8000);
   const ordered = [JOBS.find((j) => j.id === "quotes.poll")!, ...JOBS.filter((j) => j.id !== "quotes.poll")];
   for (const def of ordered) {
-    if (def.id === "tape.live") continue;
+    if (def.id === "tape.live" || def.id === "reddit.lounge") continue;
     const lane = laneOf(def.id);
     const tick = async () => {
       try {

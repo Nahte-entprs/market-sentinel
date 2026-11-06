@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { db, nowIso, readJsonFile } from "./db.ts";
+import { db, getMeta, nowIso, readJsonFile, setMeta } from "./db.ts";
 import { isMegaCap, lexiconPolarity } from "./entities.ts";
 import { extractSocialTickers, pickCommentTicker } from "./ticker-filter.ts";
-import { MARKET_TZ } from "./config.ts";
+import { config, MARKET_TZ } from "./config.ts";
 import { appSettings, blockPhrases } from "./settings.ts";
 import { discardBody } from "./http.ts";
 import { setPhase, stillRunning } from "./pulse.ts";
@@ -90,6 +90,7 @@ type ListingChild = {
     created_utc?: number;
     author?: string;
     author_flair_text?: string | null;
+    parent_id?: string;
     stickied?: boolean;
     replies?: Listing | string;
   };
@@ -1015,4 +1016,188 @@ export async function collectOtherSubs(): Promise<SocialRun> {
     storage: storageStats(),
     errors,
   };
+}
+
+export type LoungeNotice = {
+  id: string;
+  title: string;
+  message: string;
+  at: string;
+  url: string;
+};
+
+type LoungeNode = {
+  id: string;
+  parent: string;
+  author: string;
+  body: string;
+  created: number;
+  stickied: boolean;
+};
+
+function absorbLounge(listing: Listing | undefined, into: Map<string, LoungeNode>) {
+  const walk = (node: Listing | undefined) => {
+    for (const child of node?.data?.children ?? []) {
+      if (child.kind === "more") continue;
+      const d = child.data;
+      if (d?.id && typeof d.body === "string") {
+        into.set(d.id, {
+          id: d.id,
+          parent: d.parent_id ?? "",
+          author: d.author ?? "",
+          body: d.body,
+          created: Number(d.created_utc ?? 0),
+          stickied: Boolean(d.stickied),
+        });
+      }
+      if (d?.replies && typeof d.replies !== "string") walk(d.replies);
+    }
+  };
+  walk(listing);
+}
+
+function rememberLounge(threadId: string, node: LoungeNode) {
+  db.prepare(
+    `INSERT INTO lounge_comments (id, thread_id, parent_id, author, body, created_utc)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO NOTHING`,
+  ).run(node.id, threadId, node.parent, node.author, node.body.slice(0, 500), node.created);
+}
+
+function storedLounge(id: string, into: Map<string, LoungeNode>): LoungeNode | null {
+  const hit = into.get(id);
+  if (hit) return hit;
+  const row = db
+    .prepare("SELECT id, parent_id, author, body, created_utc FROM lounge_comments WHERE id = ?")
+    .get(id) as
+    | { id: string; parent_id: string; author: string; body: string; created_utc: number }
+    | undefined;
+  if (!row) return null;
+  const node: LoungeNode = {
+    id: row.id,
+    parent: row.parent_id,
+    author: row.author,
+    body: row.body,
+    created: Number(row.created_utc) || 0,
+    stickied: false,
+  };
+  into.set(id, node);
+  return node;
+}
+
+function oneLine(text: string, max: number) {
+  const t = text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max - 1).trimEnd()}…`;
+}
+
+function loungeClock(unix: number) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: config.tz || "America/Santiago",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(unix * 1000));
+  const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
+  return `${g("hour")}:${g("minute")}:${g("second")}`;
+}
+
+function pickLounge(posts: { id?: string; title?: string; stickied?: boolean; created_utc?: number }[]) {
+  const hits = posts.filter((p) => (p.title ?? "").toLowerCase().includes("the lounge") && p.id);
+  hits.sort(
+    (a, b) => Number(b.stickied) - Number(a.stickied) || Number(b.created_utc ?? 0) - Number(a.created_utc ?? 0),
+  );
+  return hits[0];
+}
+
+/** Comentarios nuevos del hilo diario The Lounge de r/pennystocks. */
+export async function collectLoungeNotices(): Promise<{ note: string; notices: LoungeNotice[] }> {
+  let thread = pickLounge(await fetchHot("pennystocks", 25));
+  if (!thread?.id) {
+    const newest = await redditJson<Listing>("/r/pennystocks/new.json?limit=15&raw_json=1");
+    const posts = (newest.data?.children ?? [])
+      .map((c) => c.data)
+      .filter((d): d is NonNullable<typeof d> => Boolean(d?.id));
+    thread = pickLounge(posts);
+  }
+  if (!thread?.id) return { note: "sin The Lounge en r/pennystocks", notices: [] };
+
+  const tree = await redditJson<[Listing, Listing]>(
+    `/r/pennystocks/comments/${thread.id}.json?limit=80&sort=new&depth=6&raw_json=1`,
+  );
+  const map = new Map<string, LoungeNode>();
+  absorbLounge(tree[1], map);
+  const threadId = thread.id;
+  if (getMeta("lounge_thread") !== threadId) {
+    for (const node of map.values()) rememberLounge(threadId, node);
+    setMeta("lounge_thread", threadId);
+    return { note: `hilo ${threadId} nuevo, ${map.size} comentarios ya presentes`, notices: [] };
+  }
+
+  const seen = new Set(
+    (db.prepare("SELECT id FROM lounge_comments WHERE thread_id = ?").all(threadId) as { id: string }[]).map((r) => r.id),
+  );
+  const fresh = [...map.values()].filter((node) => !seen.has(node.id)).sort((a, b) => a.created - b.created);
+  const notices: LoungeNotice[] = [];
+  const pending: LoungeNode[] = [];
+  let skipped = 0;
+  for (const node of fresh) {
+    const gone = !node.body.trim() || node.body === "[deleted]" || node.body === "[removed]";
+    const bot = node.author === "AutoModerator" || node.stickied;
+    if (gone || bot) {
+      rememberLounge(threadId, node);
+      skipped++;
+      continue;
+    }
+    if (notices.length >= 12) break;
+    const chain = await loungeChain(threadId, node, map);
+    const author = (node.author || "anon").replace(/\s+/g, "").slice(0, 24);
+    const lines: string[] = [];
+    if (chain.root && chain.root.id !== chain.parent?.id) lines.push(`> ${oneLine(chain.root.body, 64)}`);
+    if (chain.parent) lines.push(`> ${oneLine(chain.parent.body, 64)}`);
+    lines.push(oneLine(node.body, lines.length ? 110 : 200));
+    let message = lines.join("\n");
+    if (message.length > 220) message = `${message.slice(0, 219).trimEnd()}…`;
+    const created = node.created > 0 ? node.created : Math.floor(Date.now() / 1000);
+    notices.push({
+      id: node.id,
+      title: `${loungeClock(created)} ${author}`.slice(0, 80),
+      message,
+      at: new Date(created * 1000).toISOString(),
+      url: `https://www.reddit.com/r/pennystocks/comments/${threadId}/_/${node.id}/`,
+    });
+    pending.push(node);
+  }
+  for (const node of pending) rememberLounge(threadId, node);
+  return { note: `${thread.title ?? "The Lounge"}: ${notices.length} nuevos, ${skipped} omitidos`, notices };
+}
+
+async function loungeChain(threadId: string, node: LoungeNode, map: Map<string, LoungeNode>) {
+  if (!node.parent.startsWith("t1_")) return { root: null as LoungeNode | null, parent: null as LoungeNode | null };
+  const parent = await loungeResolve(threadId, node.parent.slice(3), node.id, map);
+  if (!parent) return { root: null, parent: null };
+  let root = parent;
+  for (let guard = 0; guard < 8 && root.parent.startsWith("t1_"); guard++) {
+    const up = await loungeResolve(threadId, root.parent.slice(3), root.id, map);
+    if (!up || up.id === root.id) break;
+    root = up;
+  }
+  if (root.id === parent.id) return { root: null, parent };
+  return { root, parent };
+}
+
+async function loungeResolve(threadId: string, id: string, fromId: string, map: Map<string, LoungeNode>) {
+  const have = map.get(id) ?? storedLounge(id, map);
+  if (have) return have;
+  const pulled = await redditJson<[Listing, Listing]>(
+    `/r/pennystocks/comments/${threadId}/_/${fromId}.json?context=8&limit=1&raw_json=1`,
+  );
+  absorbLounge(pulled[1], map);
+  return map.get(id) ?? storedLounge(id, map);
 }

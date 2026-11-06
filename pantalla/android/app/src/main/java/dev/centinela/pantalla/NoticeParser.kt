@@ -30,7 +30,7 @@ object NoticeParser {
             id = id,
             section = match?.groupValues?.get(1) ?: "radar",
             title = truncate(title.ifEmpty { "Aviso" }, 80),
-            message = truncate(message, 180),
+            message = truncate(message, 240),
             at = Instant.now().toString(),
         )
     }

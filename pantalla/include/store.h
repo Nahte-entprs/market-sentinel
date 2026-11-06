@@ -9,6 +9,7 @@ bool store_begin();
 bool store_prune(int64_t now_epoch);
 AddResult store_add(const NoticeDraft &draft);
 bool store_mark_read(uint32_t id);
+bool store_mark_all_read();
 int store_count();
 int store_unread();
 const Notice *store_at(int index);

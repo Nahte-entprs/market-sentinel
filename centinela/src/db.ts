@@ -195,6 +195,14 @@ CREATE TABLE IF NOT EXISTS reddit_ticker_snapshots (
   cheap_ok INTEGER NOT NULL,
   PRIMARY KEY (ticker, sub, captured_at)
 );
+CREATE TABLE IF NOT EXISTS lounge_comments (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  parent_id TEXT NOT NULL DEFAULT '',
+  author TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  created_utc INTEGER NOT NULL DEFAULT 0
+);
 `);
 
 function ensureColumn(table: string, column: string, ddl: string) {

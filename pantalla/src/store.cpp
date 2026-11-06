@@ -132,6 +132,17 @@ bool store_mark_read(uint32_t id) {
   return false;
 }
 
+bool store_mark_all_read() {
+  bool changed = false;
+  for (uint16_t i = 0; i < count; i++) {
+    if (!items[i].unread) continue;
+    items[i].unread = 0;
+    changed = true;
+  }
+  if (changed) persist();
+  return changed;
+}
+
 int store_count() { return count; }
 
 int store_unread() {

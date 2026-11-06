@@ -29,17 +29,6 @@ function recLabel(key: string | null, mean: number | null) {
   return "Venta fuerte";
 }
 
-function sigDigits(n: number, sig: number) {
-  const abs = Math.abs(n);
-  if (!Number.isFinite(n) || !(abs > 0)) return "n/d";
-  const sign = n < 0 ? "-" : "";
-  const exp = Math.floor(Math.log10(abs) + 1e-10);
-  const rounded = Math.round(abs / 10 ** (exp - (sig - 1))) * 10 ** (exp - (sig - 1));
-  const exp2 = Math.floor(Math.log10(rounded) + 1e-10);
-  const decimals = Math.max(0, sig - 1 - exp2);
-  return sign + (decimals > 0 ? rounded.toFixed(decimals) : String(Math.round(rounded)));
-}
-
 function pctFmt(n: number, digits = 1) {
   const sign = n > 0 ? "+" : "";
   return `${sign}${n.toFixed(digits)}%`;
@@ -212,7 +201,7 @@ export function publishLiveTape() {
     }
     return {
       s: t.symbol,
-      p: price ? sigDigits(price, 4) : "n/d",
+      p: price ? price.toFixed(2) : "n/d",
       c: changePct == null ? "" : pctFmt(changePct, 2),
       v: tape,
       t0,

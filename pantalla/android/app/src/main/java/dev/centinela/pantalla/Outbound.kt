@@ -20,7 +20,7 @@ data class Outbound(
             obj.put("message", body)
             obj.put("at", at)
             line = obj.toString() + "\n"
-            if (line.toByteArray(Charsets.UTF_8).size <= 700 || body.isEmpty()) break
+            if (line.toByteArray(Charsets.UTF_8).size <= 1100 || body.isEmpty()) break
             body = body.dropLast(16).trimEnd()
         } while (true)
         return line
