@@ -44,7 +44,7 @@
 #define MEASURE_MS 30000
 
 #define NOTICE_CAP 80
-#define NOTICE_KEEP_SEC 600
+#define NOTICE_KEEP_SEC (6 * 3600)
 #define TITLE_CHARS 80
 #define MESSAGE_CHARS 220
 #define LINE_ASM_CAP 4096

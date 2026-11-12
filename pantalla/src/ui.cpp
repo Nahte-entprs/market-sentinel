@@ -163,7 +163,10 @@ static void format_cents(char *out, size_t n, float v) {
     snprintf(out, n, "n/d");
     return;
   }
-  snprintf(out, n, "%.2f", (double)v);
+  const char *fmt = "%.2f";
+  if (v < 0.01f) fmt = "%.6f";
+  else if (v < 1.f) fmt = "%.4f";
+  snprintf(out, n, fmt, (double)v);
 }
 
 // The phone forwards percentages already rounded. Reprint them with hundredths

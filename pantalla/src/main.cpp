@@ -43,6 +43,18 @@ static bool take_clock(const char *line) {
   return true;
 }
 
+static bool lounge_title(const char *t) {
+  if (!t) return false;
+  for (int i = 0; i < 8; i++) {
+    if (i == 2 || i == 5) {
+      if (t[i] != ':') return false;
+    } else if (t[i] < '0' || t[i] > '9') {
+      return false;
+    }
+  }
+  return t[8] == ' ' && t[9] != 0;
+}
+
 static void expire_notices() {
   if (store_prune(clock_now()) && panel_ok) ui_reload();
 }
@@ -90,6 +102,10 @@ static void ingest(const char *line, bool from_ble) {
   if (!notice_from_json(line, draft, err, sizeof err)) {
     Serial.printf("[aviso] rechazado (%s)\n", err);
     if (from_ble) ble_ack("err\n");
+    return;
+  }
+  if (!lounge_title(draft.title)) {
+    if (from_ble) ble_ack("ok\n");
     return;
   }
   AddResult result = store_add(draft);

@@ -390,6 +390,19 @@ export function symbolsToRenew(): QuoteGaps {
 
 const TAPE_WINDOW_MS = 7 * 3600_000;
 
+/** Centavos desde $1. Bajo un dólar conserva las milésimas de las penny. */
+export function roundPrice(n: number) {
+  if (!(n > 0) || !Number.isFinite(n)) return n;
+  const step = n >= 1 ? 100 : n >= 0.01 ? 10_000 : 1_000_000;
+  return Math.round(n * step) / step;
+}
+
+export function formatPrice(n: number) {
+  if (!(n > 0) || !Number.isFinite(n)) return "n/d";
+  const digits = n >= 1 ? 2 : n >= 0.01 ? 4 : 6;
+  return roundPrice(n).toFixed(digits);
+}
+
 /** Velas de las últimas 7 horas, en orden. La pantalla las coloca en ese eje. */
 export function readSessionSeries(symbol: string): { ms: number; close: number; volume: number }[] {
   const until = Date.now();
@@ -403,7 +416,7 @@ export function readSessionSeries(symbol: string): { ms: number; close: number; 
     if (!Number.isFinite(ms) || ms < until - TAPE_WINDOW_MS || ms > until) continue;
     out.push({
       ms,
-      close: Math.round(bar.close * 100) / 100,
+      close: roundPrice(bar.close),
       volume: Math.max(0, Math.round(bar.volume)),
     });
   }

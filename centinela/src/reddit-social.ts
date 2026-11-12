@@ -1116,29 +1116,86 @@ function pickLounge(posts: { id?: string; title?: string; stickied?: boolean; cr
   return hits[0];
 }
 
-/** Comentarios nuevos del hilo diario The Lounge de r/pennystocks. */
-export async function collectLoungeNotices(): Promise<{ note: string; notices: LoungeNotice[] }> {
-  let thread = pickLounge(await fetchHot("pennystocks", 25));
-  if (!thread?.id) {
-    const newest = await redditJson<Listing>("/r/pennystocks/new.json?limit=15&raw_json=1");
+async function arcticJson<T>(url: string): Promise<T> {
+  const res = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "Centinela/1.6.23 (+https://github.com/Nahte-entprs/market-sentinel)",
+    },
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) {
+    await discardBody(res);
+    throw new Error(`archivo ${res.status}`);
+  }
+  return (await res.json()) as T;
+}
+
+async function findLoungeThread(): Promise<{ id: string; title?: string } | undefined> {
+  try {
+    const hot = pickLounge(await fetchHot("pennystocks", 25));
+    if (hot?.id) return { id: hot.id, title: hot.title };
+  } catch (err) {
+    console.warn(`[lounge] hot: ${(err as Error).message}`);
+  }
+  try {
+    const newest = await redditJson<Listing>("/r/pennystocks/new.json?limit=20&raw_json=1");
     const posts = (newest.data?.children ?? [])
       .map((c) => c.data)
       .filter((d): d is NonNullable<typeof d> => Boolean(d?.id));
-    thread = pickLounge(posts);
+    const picked = pickLounge(posts);
+    if (picked?.id) return { id: picked.id, title: picked.title };
+  } catch (err) {
+    console.warn(`[lounge] new: ${(err as Error).message}`);
   }
+  const archived = await arcticJson<{ data?: { id?: string; title?: string; stickied?: boolean; created_utc?: number }[] }>(
+    "https://arctic-shift.photon-reddit.com/api/posts/search?subreddit=pennystocks&limit=40&sort=desc",
+  );
+  const picked = pickLounge(archived.data ?? []);
+  return picked?.id ? { id: picked.id, title: picked.title } : undefined;
+}
+
+function absorbArctic(rows: { id?: string; parent_id?: string; author?: string; body?: string; created_utc?: number; stickied?: boolean }[], into: Map<string, LoungeNode>) {
+  for (const row of rows) {
+    if (!row.id || typeof row.body !== "string" || into.has(row.id)) continue;
+    into.set(row.id, {
+      id: row.id,
+      parent: row.parent_id ?? "",
+      author: row.author ?? "",
+      body: row.body,
+      created: Number(row.created_utc ?? 0),
+      stickied: Boolean(row.stickied),
+    });
+  }
+}
+
+/** Comentarios nuevos del hilo diario The Lounge de r/pennystocks. */
+export async function collectLoungeNotices(): Promise<{ note: string; notices: LoungeNotice[] }> {
+  const thread = await findLoungeThread();
   if (!thread?.id) return { note: "sin The Lounge en r/pennystocks", notices: [] };
 
-  const tree = await redditJson<[Listing, Listing]>(
-    `/r/pennystocks/comments/${thread.id}.json?limit=80&sort=new&depth=6&raw_json=1`,
-  );
   const map = new Map<string, LoungeNode>();
-  absorbLounge(tree[1], map);
   const threadId = thread.id;
-  if (getMeta("lounge_thread") !== threadId) {
-    for (const node of map.values()) rememberLounge(threadId, node);
-    setMeta("lounge_thread", threadId);
-    return { note: `hilo ${threadId} nuevo, ${map.size} comentarios ya presentes`, notices: [] };
+  try {
+    const tree = await redditJson<[Listing, Listing]>(
+      `/r/pennystocks/comments/${threadId}.json?limit=100&sort=new&depth=10&raw_json=1`,
+    );
+    absorbLounge(tree[1], map);
+  } catch (err) {
+    console.warn(`[lounge] reddit: ${(err as Error).message}`);
   }
+  try {
+    const archived = await arcticJson<{ data?: { id?: string; parent_id?: string; author?: string; body?: string; created_utc?: number; stickied?: boolean }[] }>(
+      `https://arctic-shift.photon-reddit.com/api/comments/search?link_id=${encodeURIComponent(threadId)}&limit=100&sort=desc`,
+    );
+    absorbArctic(archived.data ?? [], map);
+  } catch (err) {
+    console.warn(`[lounge] archivo: ${(err as Error).message}`);
+  }
+  if (!map.size) return { note: `${thread.title ?? "The Lounge"}: sin comentarios`, notices: [] };
+
+  const freshThread = getMeta("lounge_thread") !== threadId;
+  const cutoff = Math.floor(Date.now() / 1000) - 180;
 
   const seen = new Set(
     (db.prepare("SELECT id FROM lounge_comments WHERE thread_id = ?").all(threadId) as { id: string }[]).map((r) => r.id),
@@ -1148,6 +1205,11 @@ export async function collectLoungeNotices(): Promise<{ note: string; notices: L
   const pending: LoungeNode[] = [];
   let skipped = 0;
   for (const node of fresh) {
+    if (freshThread && node.created > 0 && node.created < cutoff) {
+      rememberLounge(threadId, node);
+      skipped++;
+      continue;
+    }
     const gone = !node.body.trim() || node.body === "[deleted]" || node.body === "[removed]";
     const bot = node.author === "AutoModerator" || node.stickied;
     if (gone || bot) {
@@ -1155,7 +1217,7 @@ export async function collectLoungeNotices(): Promise<{ note: string; notices: L
       skipped++;
       continue;
     }
-    if (notices.length >= 12) break;
+    if (notices.length >= 20) break;
     const chain = await loungeChain(threadId, node, map);
     const author = (node.author || "anon").replace(/\s+/g, "").slice(0, 24);
     const lines: string[] = [];
@@ -1175,6 +1237,7 @@ export async function collectLoungeNotices(): Promise<{ note: string; notices: L
     pending.push(node);
   }
   for (const node of pending) rememberLounge(threadId, node);
+  if (freshThread) setMeta("lounge_thread", threadId);
   return { note: `${thread.title ?? "The Lounge"}: ${notices.length} nuevos, ${skipped} omitidos`, notices };
 }
 
@@ -1195,9 +1258,14 @@ async function loungeChain(threadId: string, node: LoungeNode, map: Map<string, 
 async function loungeResolve(threadId: string, id: string, fromId: string, map: Map<string, LoungeNode>) {
   const have = map.get(id) ?? storedLounge(id, map);
   if (have) return have;
-  const pulled = await redditJson<[Listing, Listing]>(
-    `/r/pennystocks/comments/${threadId}/_/${fromId}.json?context=8&limit=1&raw_json=1`,
-  );
-  absorbLounge(pulled[1], map);
+  try {
+    const pulled = await redditJson<[Listing, Listing]>(
+      `/r/pennystocks/comments/${threadId}/_/${fromId}.json?context=8&limit=1&raw_json=1`,
+    );
+    absorbLounge(pulled[1], map);
+  } catch (err) {
+    console.warn(`[lounge] padre ${id}: ${(err as Error).message}`);
+    return null;
+  }
   return map.get(id) ?? storedLounge(id, map);
 }

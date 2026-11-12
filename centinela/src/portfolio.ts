@@ -1,5 +1,5 @@
 import { listTickers, listTickersByCategory } from "./universe.ts";
-import { getQuote, liveTapeQuote, quoteError, readSessionSeries, readTapeVolumeAverage, readVolumeCurve, readVolumeSignal, screenMacroText, tapeSignalText } from "./quotes.ts";
+import { formatPrice, getQuote, liveTapeQuote, quoteError, readSessionSeries, readTapeVolumeAverage, readVolumeCurve, readVolumeSignal, roundPrice, screenMacroText, tapeSignalText } from "./quotes.ts";
 import { publishCartera, publishTape, publishWatchlist } from "./mqtt.ts";
 import { MIN_SLOT_SAMPLES } from "./volume.ts";
 import { watchBand } from "./settings.ts";
@@ -159,18 +159,28 @@ export function toPosition(t: TickerRow): CarteraPosition {
   };
 }
 
+/** El last de CNBC en una penny llega en centavos. La vela de 5m trae 4 decimales. */
+function tapePrice(quoted: number | undefined, series: { ms: number; close: number }[]) {
+  const bar = series.at(-1);
+  const fresh = bar && bar.close > 0 && Date.now() - bar.ms <= 8 * 60_000 ? bar.close : undefined;
+  if (!(quoted && quoted > 0)) return fresh;
+  if (fresh == null) return quoted;
+  if (Math.round(quoted * 100) !== Math.round(fresh * 100)) return quoted;
+  return fresh;
+}
+
 export function publishLiveTape() {
   const tickers = listTickersByCategory("live");
   const rows = tickers.slice(0, 8).map((t) => {
     const q = getQuote(t.symbol);
     const live = liveTapeQuote(t.symbol);
-    const price = live?.price ?? q?.price;
+    const series = readSessionSeries(t.symbol);
+    const price = tapePrice(live?.price ?? q?.price, series);
     const changePct = live ? live.changePct : q?.changeTrusted ? q.changePct : null;
     const shares = compactVol(live?.volume || q?.volume || 0);
     const ratio = q && q.volumeRatio > 0 ? `${q.volumeRatio.toFixed(1)}x prom` : "";
     const vol = shares && ratio ? `${shares}  ${ratio}` : shares || ratio;
     const tape = [vol, screenMacroText(), tapeSignalText(t.symbol, price && price > 0 ? price : 0, q?.volumeRatio ?? 0)].join("|");
-    const series = readSessionSeries(t.symbol);
     const t1 = Math.floor(Date.now() / 1000);
     const t0 = t1 - 7 * 3600;
     const slots = 84;
@@ -186,7 +196,7 @@ export function publishLiveTape() {
       bucketPx[idx] = bar.close;
       bucketVl[idx] = bar.volume;
     }
-    if (price && price > 0) bucketPx[slots - 1] = Math.round(price * 100) / 100;
+    if (price && price > 0) bucketPx[slots - 1] = roundPrice(price);
     const i: number[] = [];
     const px: number[] = [];
     const vl: number[] = [];
@@ -201,12 +211,12 @@ export function publishLiveTape() {
     }
     return {
       s: t.symbol,
-      p: price ? price.toFixed(2) : "n/d",
+      p: price ? formatPrice(price) : "n/d",
       c: changePct == null ? "" : pctFmt(changePct, 2),
       v: tape,
       t0,
       t1,
-      lv: t.tape_level && t.tape_level > 0 ? Math.round(t.tape_level * 100) / 100 : undefined,
+      lv: t.tape_level && t.tape_level > 0 ? roundPrice(t.tape_level) : undefined,
       i,
       px,
       vl,

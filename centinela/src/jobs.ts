@@ -605,6 +605,7 @@ async function loungeJob() {
       url: n.url,
       at: n.at,
       tag: n.id,
+      force: true,
     });
   }
   return note;
@@ -776,7 +777,7 @@ async function tapeJob() {
 
 export const JOBS: JobDef[] = [
   { id: "quotes.poll", name: "Cotizaciones", description: "Precio, volumen y medias móviles", cadenceMs: () => (isRth() ? 15 : 30) * 60_000, run: quotesJob },
-  { id: "tape.live", name: "En tiempo real", description: "Precio de la cartera en vivo, para la pantalla", cadenceMs: () => (isExtendedHours() ? 10 : 60) * 1000, run: tapeJob },
+  { id: "tape.live", name: "En tiempo real", description: "Precio de la cartera en vivo, para la pantalla", cadenceMs: () => (isExtendedHours() ? 5 : 60) * 1000, run: tapeJob },
   { id: "fundamentals.poll", name: "Fundamentals", description: "Rating analistas, PT y 52w", cadenceMs: () => 60 * 60_000, run: fundamentalsJob },
   { id: "regime.tick", name: "Régimen", description: "NORMAL → CRISIS", cadenceMs: () => (isRth() ? 5 : 15) * 60_000, run: regimeJob },
   {

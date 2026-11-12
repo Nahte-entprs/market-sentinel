@@ -11,7 +11,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object TapePoller {
-    private const val EVERY_MS = 10_000L
+    private const val EVERY_MS = 5_000L
     private val thread = HandlerThread("centinela-tape")
     private val handler by lazy { Handler(thread.looper) }
     private var started = false

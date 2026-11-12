@@ -55,6 +55,16 @@ static bool load() {
   return true;
 }
 
+static bool lounge_title(const char *t) {
+  if (!t) return false;
+  for (int i = 0; i < 8; i++) {
+    bool colon = i == 2 || i == 5;
+    if (colon && t[i] != ':') return false;
+    if (!colon && (t[i] < '0' || t[i] > '9')) return false;
+  }
+  return t[8] == ' ' && t[9] != 0;
+}
+
 bool store_prune(int64_t now_epoch) {
   int64_t newest = now_epoch > 0 ? now_epoch : 0;
   for (uint16_t i = 0; i < count; i++) {
@@ -67,7 +77,7 @@ bool store_prune(int64_t now_epoch) {
   bool changed = false;
   for (uint16_t i = 0; i < count; i++) {
     int64_t at = 0;
-    bool keep = !items[i].demo && parse_iso_epoch(items[i].at, &at) && newest > 0 && at >= cutoff;
+    bool keep = !items[i].demo && lounge_title(items[i].title) && parse_iso_epoch(items[i].at, &at) && newest > 0 && at >= cutoff;
     if (!keep) {
       changed = true;
       continue;
