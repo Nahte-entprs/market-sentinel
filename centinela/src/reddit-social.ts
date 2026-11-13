@@ -1108,11 +1108,15 @@ function loungeClock(unix: number) {
   return `${g("hour")}:${g("minute")}:${g("second")}`;
 }
 
+const LOUNGE_THREAD_SEC = 30 * 3600;
+const LOUNGE_LIVE_SEC = 20 * 60;
+
 function pickLounge(posts: { id?: string; title?: string; stickied?: boolean; created_utc?: number }[]) {
-  const hits = posts.filter((p) => (p.title ?? "").toLowerCase().includes("the lounge") && p.id);
-  hits.sort(
-    (a, b) => Number(b.stickied) - Number(a.stickied) || Number(b.created_utc ?? 0) - Number(a.created_utc ?? 0),
+  const now = Math.floor(Date.now() / 1000);
+  const hits = posts.filter(
+    (p) => p.id && (p.title ?? "").toLowerCase().includes("the lounge") && Number(p.created_utc ?? 0) >= now - LOUNGE_THREAD_SEC,
   );
+  hits.sort((a, b) => Number(b.created_utc ?? 0) - Number(a.created_utc ?? 0));
   return hits[0];
 }
 
@@ -1120,7 +1124,7 @@ async function arcticJson<T>(url: string): Promise<T> {
   const res = await fetch(url, {
     headers: {
       Accept: "application/json",
-      "User-Agent": "Centinela/1.6.23 (+https://github.com/Nahte-entprs/market-sentinel)",
+      "User-Agent": "Centinela/1.6.24 (+https://github.com/Nahte-entprs/market-sentinel)",
     },
     signal: AbortSignal.timeout(20000),
   });
@@ -1132,27 +1136,37 @@ async function arcticJson<T>(url: string): Promise<T> {
 }
 
 async function findLoungeThread(): Promise<{ id: string; title?: string } | undefined> {
+  const bag: { id?: string; title?: string; stickied?: boolean; created_utc?: number }[] = [];
   try {
-    const hot = pickLounge(await fetchHot("pennystocks", 25));
-    if (hot?.id) return { id: hot.id, title: hot.title };
+    bag.push(...(await fetchHot("pennystocks", 25)));
   } catch (err) {
     console.warn(`[lounge] hot: ${(err as Error).message}`);
   }
   try {
-    const newest = await redditJson<Listing>("/r/pennystocks/new.json?limit=20&raw_json=1");
-    const posts = (newest.data?.children ?? [])
-      .map((c) => c.data)
-      .filter((d): d is NonNullable<typeof d> => Boolean(d?.id));
-    const picked = pickLounge(posts);
+    const found = await redditJson<Listing>(
+      `/r/pennystocks/search.json?q=${encodeURIComponent('title:"The Lounge"')}&restrict_sr=1&sort=new&limit=5&raw_json=1`,
+    );
+    bag.push(
+      ...(found.data?.children ?? [])
+        .map((c) => c.data)
+        .filter((d): d is NonNullable<typeof d> => Boolean(d?.id)),
+    );
+  } catch (err) {
+    console.warn(`[lounge] busqueda: ${(err as Error).message}`);
+  }
+  const live = pickLounge(bag);
+  if (live?.id) return { id: live.id, title: live.title };
+  const since = Math.floor(Date.now() / 1000) - LOUNGE_THREAD_SEC;
+  try {
+    const archived = await arcticJson<{ data?: { id?: string; title?: string; stickied?: boolean; created_utc?: number }[] }>(
+      `https://arctic-shift.photon-reddit.com/api/posts/search?subreddit=pennystocks&query=${encodeURIComponent("The Lounge")}&after=${since}&limit=20&sort=desc`,
+    );
+    const picked = pickLounge(archived.data ?? []);
     if (picked?.id) return { id: picked.id, title: picked.title };
   } catch (err) {
-    console.warn(`[lounge] new: ${(err as Error).message}`);
+    console.warn(`[lounge] archivo posts: ${(err as Error).message}`);
   }
-  const archived = await arcticJson<{ data?: { id?: string; title?: string; stickied?: boolean; created_utc?: number }[] }>(
-    "https://arctic-shift.photon-reddit.com/api/posts/search?subreddit=pennystocks&limit=40&sort=desc",
-  );
-  const picked = pickLounge(archived.data ?? []);
-  return picked?.id ? { id: picked.id, title: picked.title } : undefined;
+  return undefined;
 }
 
 function absorbArctic(rows: { id?: string; parent_id?: string; author?: string; body?: string; created_utc?: number; stickied?: boolean }[], into: Map<string, LoungeNode>) {
@@ -1195,7 +1209,7 @@ export async function collectLoungeNotices(): Promise<{ note: string; notices: L
   if (!map.size) return { note: `${thread.title ?? "The Lounge"}: sin comentarios`, notices: [] };
 
   const freshThread = getMeta("lounge_thread") !== threadId;
-  const cutoff = Math.floor(Date.now() / 1000) - 180;
+  const cutoff = Math.floor(Date.now() / 1000) - LOUNGE_LIVE_SEC;
 
   const seen = new Set(
     (db.prepare("SELECT id FROM lounge_comments WHERE thread_id = ?").all(threadId) as { id: string }[]).map((r) => r.id),
@@ -1205,7 +1219,7 @@ export async function collectLoungeNotices(): Promise<{ note: string; notices: L
   const pending: LoungeNode[] = [];
   let skipped = 0;
   for (const node of fresh) {
-    if (freshThread && node.created > 0 && node.created < cutoff) {
+    if (!(node.created > cutoff)) {
       rememberLounge(threadId, node);
       skipped++;
       continue;
@@ -1238,7 +1252,10 @@ export async function collectLoungeNotices(): Promise<{ note: string; notices: L
   }
   for (const node of pending) rememberLounge(threadId, node);
   if (freshThread) setMeta("lounge_thread", threadId);
-  return { note: `${thread.title ?? "The Lounge"}: ${notices.length} nuevos, ${skipped} omitidos`, notices };
+  return {
+    note: `${thread.title ?? "The Lounge"} ${threadId}: ${notices.length} nuevos, ${skipped} omitidos`,
+    notices,
+  };
 }
 
 async function loungeChain(threadId: string, node: LoungeNode, map: Map<string, LoungeNode>) {
