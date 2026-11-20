@@ -1109,7 +1109,11 @@ function loungeClock(unix: number) {
 }
 
 const LOUNGE_THREAD_SEC = 30 * 3600;
-const LOUNGE_LIVE_SEC = 20 * 60;
+const LOUNGE_ARM_SEC = 3 * 60;
+const LOUNGE_PACE = 8;
+const LOUNGE_THREAD_CACHE_MS = 10 * 60_000;
+
+let loungeThreadCache: { id: string; title?: string; at: number } | null = null;
 
 function pickLounge(posts: { id?: string; title?: string; stickied?: boolean; created_utc?: number }[]) {
   const now = Math.floor(Date.now() / 1000);
@@ -1124,7 +1128,7 @@ async function arcticJson<T>(url: string): Promise<T> {
   const res = await fetch(url, {
     headers: {
       Accept: "application/json",
-      "User-Agent": "Centinela/1.6.24 (+https://github.com/Nahte-entprs/market-sentinel)",
+      "User-Agent": "Centinela/1.6.25 (+https://github.com/Nahte-entprs/market-sentinel)",
     },
     signal: AbortSignal.timeout(20000),
   });
@@ -1136,37 +1140,38 @@ async function arcticJson<T>(url: string): Promise<T> {
 }
 
 async function findLoungeThread(): Promise<{ id: string; title?: string } | undefined> {
-  const bag: { id?: string; title?: string; stickied?: boolean; created_utc?: number }[] = [];
-  try {
-    bag.push(...(await fetchHot("pennystocks", 25)));
-  } catch (err) {
-    console.warn(`[lounge] hot: ${(err as Error).message}`);
-  }
-  try {
-    const found = await redditJson<Listing>(
-      `/r/pennystocks/search.json?q=${encodeURIComponent('title:"The Lounge"')}&restrict_sr=1&sort=new&limit=5&raw_json=1`,
-    );
-    bag.push(
-      ...(found.data?.children ?? [])
-        .map((c) => c.data)
-        .filter((d): d is NonNullable<typeof d> => Boolean(d?.id)),
-    );
-  } catch (err) {
-    console.warn(`[lounge] busqueda: ${(err as Error).message}`);
-  }
-  const live = pickLounge(bag);
-  if (live?.id) return { id: live.id, title: live.title };
+  if (loungeThreadCache && Date.now() - loungeThreadCache.at < LOUNGE_THREAD_CACHE_MS) return loungeThreadCache;
   const since = Math.floor(Date.now() / 1000) - LOUNGE_THREAD_SEC;
   try {
     const archived = await arcticJson<{ data?: { id?: string; title?: string; stickied?: boolean; created_utc?: number }[] }>(
-      `https://arctic-shift.photon-reddit.com/api/posts/search?subreddit=pennystocks&query=${encodeURIComponent("The Lounge")}&after=${since}&limit=20&sort=desc`,
+      `https://arctic-shift.photon-reddit.com/api/posts/search?subreddit=pennystocks&query=${encodeURIComponent("The Lounge")}&after=${since}&limit=15&sort=desc`,
     );
     const picked = pickLounge(archived.data ?? []);
-    if (picked?.id) return { id: picked.id, title: picked.title };
+    if (picked?.id) {
+      loungeThreadCache = { id: picked.id, title: picked.title, at: Date.now() };
+      return loungeThreadCache;
+    }
   } catch (err) {
-    console.warn(`[lounge] archivo posts: ${(err as Error).message}`);
+    console.warn(`[lounge] hilo: ${(err as Error).message}`);
   }
+  if (loungeThreadCache && Date.now() - loungeThreadCache.at < 6 * 3600_000) return loungeThreadCache;
   return undefined;
+}
+
+type ArcticComment = {
+  id?: string;
+  parent_id?: string;
+  author?: string;
+  body?: string;
+  created_utc?: number;
+  stickied?: boolean;
+};
+
+async function loungeComments(threadId: string, cursor: number): Promise<ArcticComment[]> {
+  const base = `https://arctic-shift.photon-reddit.com/api/comments/search?link_id=${encodeURIComponent(threadId)}&limit=40`;
+  const url = cursor > 0 ? `${base}&sort=asc&after=${cursor}` : `${base}&sort=desc`;
+  const archived = await arcticJson<{ data?: ArcticComment[] }>(url);
+  return archived.data ?? [];
 }
 
 function absorbArctic(rows: { id?: string; parent_id?: string; author?: string; body?: string; created_utc?: number; stickied?: boolean }[], into: Map<string, LoungeNode>) {
@@ -1183,56 +1188,74 @@ function absorbArctic(rows: { id?: string; parent_id?: string; author?: string; 
   }
 }
 
+function loungeChainLocal(node: LoungeNode, map: Map<string, LoungeNode>) {
+  if (!node.parent.startsWith("t1_")) return { root: null as LoungeNode | null, parent: null as LoungeNode | null };
+  const parent = map.get(node.parent.slice(3)) ?? storedLounge(node.parent.slice(3), map);
+  if (!parent) return { root: null, parent: null };
+  let root = parent;
+  for (let guard = 0; guard < 8 && root.parent.startsWith("t1_"); guard++) {
+    const up = map.get(root.parent.slice(3)) ?? storedLounge(root.parent.slice(3), map);
+    if (!up || up.id === root.id) break;
+    root = up;
+  }
+  if (root.id === parent.id) return { root: null, parent };
+  return { root, parent };
+}
+
 /** Comentarios nuevos del hilo diario The Lounge de r/pennystocks. */
 export async function collectLoungeNotices(): Promise<{ note: string; notices: LoungeNotice[] }> {
   const thread = await findLoungeThread();
   if (!thread?.id) return { note: "sin The Lounge en r/pennystocks", notices: [] };
 
-  const map = new Map<string, LoungeNode>();
   const threadId = thread.id;
-  try {
-    const tree = await redditJson<[Listing, Listing]>(
-      `/r/pennystocks/comments/${threadId}.json?limit=100&sort=new&depth=10&raw_json=1`,
-    );
-    absorbLounge(tree[1], map);
-  } catch (err) {
-    console.warn(`[lounge] reddit: ${(err as Error).message}`);
-  }
-  try {
-    const archived = await arcticJson<{ data?: { id?: string; parent_id?: string; author?: string; body?: string; created_utc?: number; stickied?: boolean }[] }>(
-      `https://arctic-shift.photon-reddit.com/api/comments/search?link_id=${encodeURIComponent(threadId)}&limit=100&sort=desc`,
-    );
-    absorbArctic(archived.data ?? [], map);
-  } catch (err) {
-    console.warn(`[lounge] archivo: ${(err as Error).message}`);
-  }
-  if (!map.size) return { note: `${thread.title ?? "The Lounge"}: sin comentarios`, notices: [] };
+  const sameThread = getMeta("lounge_thread") === threadId;
+  const cursor = sameThread ? Number(getMeta("lounge_cursor") || 0) : 0;
+  const label = `${thread.title ?? "The Lounge"} ${threadId}`;
 
-  const freshThread = getMeta("lounge_thread") !== threadId;
-  const cutoff = Math.floor(Date.now() / 1000) - LOUNGE_LIVE_SEC;
+  let rows: ArcticComment[] = [];
+  try {
+    rows = await loungeComments(threadId, cursor);
+  } catch (err) {
+    console.warn(`[lounge] comentarios: ${(err as Error).message}`);
+    return { note: `${label}: archivo sin respuesta`, notices: [] };
+  }
+
+  const map = new Map<string, LoungeNode>();
+  absorbArctic(rows, map);
+  if (!map.size) {
+    setMeta("lounge_thread", threadId);
+    return { note: `${label}: sin comentarios nuevos`, notices: [] };
+  }
 
   const seen = new Set(
     (db.prepare("SELECT id FROM lounge_comments WHERE thread_id = ?").all(threadId) as { id: string }[]).map((r) => r.id),
   );
-  const fresh = [...map.values()].filter((node) => !seen.has(node.id)).sort((a, b) => a.created - b.created);
+  let arm = cursor;
+  if (!(arm > 0)) {
+    const newest = Math.max(...[...map.values()].map((node) => node.created));
+    arm = newest > 0 ? newest - LOUNGE_ARM_SEC : Math.floor(Date.now() / 1000) - LOUNGE_ARM_SEC;
+    for (const node of map.values()) {
+      if (node.created <= arm) rememberLounge(threadId, node);
+    }
+  }
+
+  const ordered = [...map.values()].filter((node) => node.created > arm).sort((a, b) => a.created - b.created);
   const notices: LoungeNotice[] = [];
-  const pending: LoungeNode[] = [];
-  let skipped = 0;
-  for (const node of fresh) {
-    if (!(node.created > cutoff)) {
-      rememberLounge(threadId, node);
-      skipped++;
+  let advanced = arm;
+  for (const node of ordered) {
+    if (seen.has(node.id)) {
+      advanced = node.created;
       continue;
     }
     const gone = !node.body.trim() || node.body === "[deleted]" || node.body === "[removed]";
     const bot = node.author === "AutoModerator" || node.stickied;
     if (gone || bot) {
       rememberLounge(threadId, node);
-      skipped++;
+      advanced = node.created;
       continue;
     }
-    if (notices.length >= 20) break;
-    const chain = await loungeChain(threadId, node, map);
+    if (notices.length >= LOUNGE_PACE) break;
+    const chain = loungeChainLocal(node, map);
     const author = (node.author || "anon").replace(/\s+/g, "").slice(0, 24);
     const lines: string[] = [];
     if (chain.root && chain.root.id !== chain.parent?.id) lines.push(`> ${oneLine(chain.root.body, 64)}`);
@@ -1248,41 +1271,10 @@ export async function collectLoungeNotices(): Promise<{ note: string; notices: L
       at: new Date(created * 1000).toISOString(),
       url: `https://www.reddit.com/r/pennystocks/comments/${threadId}/_/${node.id}/`,
     });
-    pending.push(node);
+    rememberLounge(threadId, node);
+    advanced = node.created;
   }
-  for (const node of pending) rememberLounge(threadId, node);
-  if (freshThread) setMeta("lounge_thread", threadId);
-  return {
-    note: `${thread.title ?? "The Lounge"} ${threadId}: ${notices.length} nuevos, ${skipped} omitidos`,
-    notices,
-  };
-}
-
-async function loungeChain(threadId: string, node: LoungeNode, map: Map<string, LoungeNode>) {
-  if (!node.parent.startsWith("t1_")) return { root: null as LoungeNode | null, parent: null as LoungeNode | null };
-  const parent = await loungeResolve(threadId, node.parent.slice(3), node.id, map);
-  if (!parent) return { root: null, parent: null };
-  let root = parent;
-  for (let guard = 0; guard < 8 && root.parent.startsWith("t1_"); guard++) {
-    const up = await loungeResolve(threadId, root.parent.slice(3), root.id, map);
-    if (!up || up.id === root.id) break;
-    root = up;
-  }
-  if (root.id === parent.id) return { root: null, parent };
-  return { root, parent };
-}
-
-async function loungeResolve(threadId: string, id: string, fromId: string, map: Map<string, LoungeNode>) {
-  const have = map.get(id) ?? storedLounge(id, map);
-  if (have) return have;
-  try {
-    const pulled = await redditJson<[Listing, Listing]>(
-      `/r/pennystocks/comments/${threadId}/_/${fromId}.json?context=8&limit=1&raw_json=1`,
-    );
-    absorbLounge(pulled[1], map);
-  } catch (err) {
-    console.warn(`[lounge] padre ${id}: ${(err as Error).message}`);
-    return null;
-  }
-  return map.get(id) ?? storedLounge(id, map);
+  setMeta("lounge_thread", threadId);
+  if (advanced > 0) setMeta("lounge_cursor", String(advanced));
+  return { note: `${label}: ${notices.length} nuevos`, notices };
 }
