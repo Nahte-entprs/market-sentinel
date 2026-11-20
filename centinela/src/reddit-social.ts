@@ -1110,7 +1110,7 @@ function loungeClock(unix: number) {
 
 const LOUNGE_THREAD_SEC = 30 * 3600;
 const LOUNGE_ARM_SEC = 3 * 60;
-const LOUNGE_PACE = 8;
+const LOUNGE_PACE = 15;
 const LOUNGE_THREAD_CACHE_MS = 10 * 60_000;
 
 let loungeThreadCache: { id: string; title?: string; at: number } | null = null;
@@ -1128,7 +1128,7 @@ async function arcticJson<T>(url: string): Promise<T> {
   const res = await fetch(url, {
     headers: {
       Accept: "application/json",
-      "User-Agent": "Centinela/1.6.25 (+https://github.com/Nahte-entprs/market-sentinel)",
+      "User-Agent": "Centinela/1.6.26 (+https://github.com/Nahte-entprs/market-sentinel)",
     },
     signal: AbortSignal.timeout(20000),
   });
@@ -1167,11 +1167,35 @@ type ArcticComment = {
   stickied?: boolean;
 };
 
-async function loungeComments(threadId: string, cursor: number): Promise<ArcticComment[]> {
-  const base = `https://arctic-shift.photon-reddit.com/api/comments/search?link_id=${encodeURIComponent(threadId)}&limit=40`;
-  const url = cursor > 0 ? `${base}&sort=asc&after=${cursor}` : `${base}&sort=desc`;
-  const archived = await arcticJson<{ data?: ArcticComment[] }>(url);
-  return archived.data ?? [];
+async function pullLounge(threadId: string, sort: "new" | "old", into: Map<string, LoungeNode>) {
+  const url = `https://www.reddit.com/r/pennystocks/comments/${threadId}.json?limit=100&sort=${sort}&depth=6&raw_json=1`;
+  const res = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    },
+    signal: AbortSignal.timeout(18000),
+    redirect: "follow",
+  });
+  if (!res.ok) {
+    await discardBody(res);
+    throw new Error(`reddit ${res.status}`);
+  }
+  const ctype = res.headers.get("content-type") || "";
+  if (!ctype.includes("json") && !ctype.includes("javascript")) {
+    await discardBody(res);
+    throw new Error("reddit no-json");
+  }
+  const tree = (await res.json()) as [Listing, Listing];
+  absorbLounge(tree[1], into);
+}
+
+async function fetchLoungeTree(threadId: string, cursor: number, into: Map<string, LoungeNode>) {
+  await pullLounge(threadId, "new", into);
+  if (!(cursor > 0)) return;
+  const times = [...into.values()].map((node) => node.created).filter((t) => t > 0);
+  const oldest = times.length ? Math.min(...times) : 0;
+  if (oldest > cursor + 15 * 60) await pullLounge(threadId, "old", into);
 }
 
 function absorbArctic(rows: { id?: string; parent_id?: string; author?: string; body?: string; created_utc?: number; stickied?: boolean }[], into: Map<string, LoungeNode>) {
@@ -1212,19 +1236,26 @@ export async function collectLoungeNotices(): Promise<{ note: string; notices: L
   const cursor = sameThread ? Number(getMeta("lounge_cursor") || 0) : 0;
   const label = `${thread.title ?? "The Lounge"} ${threadId}`;
 
-  let rows: ArcticComment[] = [];
-  try {
-    rows = await loungeComments(threadId, cursor);
-  } catch (err) {
-    console.warn(`[lounge] comentarios: ${(err as Error).message}`);
-    return { note: `${label}: archivo sin respuesta`, notices: [] };
-  }
-
   const map = new Map<string, LoungeNode>();
-  absorbArctic(rows, map);
+  let source = "reddit";
+  try {
+    await fetchLoungeTree(threadId, cursor, map);
+  } catch (err) {
+    source = (err as Error).message;
+    console.warn(`[lounge] ${source}`);
+  }
+  try {
+    const archived = await arcticJson<{ data?: ArcticComment[] }>(
+      `https://arctic-shift.photon-reddit.com/api/comments/search?link_id=${encodeURIComponent(threadId)}&limit=20&sort=desc`,
+    );
+    absorbArctic(archived.data ?? [], map);
+  } catch (err) {
+    console.warn(`[lounge] archivo: ${(err as Error).message}`);
+    if (source !== "reddit") source = `${source} · archivo sin respuesta`;
+  }
   if (!map.size) {
     setMeta("lounge_thread", threadId);
-    return { note: `${label}: sin comentarios nuevos`, notices: [] };
+    return { note: `${label}: ${source}`, notices: [] };
   }
 
   const seen = new Set(
@@ -1276,5 +1307,5 @@ export async function collectLoungeNotices(): Promise<{ note: string; notices: L
   }
   setMeta("lounge_thread", threadId);
   if (advanced > 0) setMeta("lounge_cursor", String(advanced));
-  return { note: `${label}: ${notices.length} nuevos`, notices };
+  return { note: `${label}: ${notices.length} nuevos · ${source}`, notices };
 }
