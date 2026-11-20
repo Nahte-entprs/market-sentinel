@@ -1128,7 +1128,7 @@ async function arcticJson<T>(url: string): Promise<T> {
   const res = await fetch(url, {
     headers: {
       Accept: "application/json",
-      "User-Agent": "Centinela/1.6.26 (+https://github.com/Nahte-entprs/market-sentinel)",
+      "User-Agent": "Centinela/1.6.27 (+https://github.com/Nahte-entprs/market-sentinel)",
     },
     signal: AbortSignal.timeout(20000),
   });
@@ -1167,13 +1167,69 @@ type ArcticComment = {
   stickied?: boolean;
 };
 
-async function pullLounge(threadId: string, sort: "new" | "old", into: Map<string, LoungeNode>) {
-  const url = `https://www.reddit.com/r/pennystocks/comments/${threadId}.json?limit=100&sort=${sort}&depth=6&raw_json=1`;
+const LOUNGE_BROWSER = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
+const LOUNGE_MIRRORS = ["https://redlib.zanity.net"];
+
+function loungeEntity(n: number) {
+  if (!Number.isFinite(n) || n < 0 || n > 0x10ffff) return "";
+  return String.fromCodePoint(n);
+}
+
+function decodeLoungeHtml(text: string) {
+  return text
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#(\d+);/g, (_, n: string) => loungeEntity(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n: string) => loungeEntity(parseInt(n, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ");
+}
+
+/** Redlib renders the thread when www.reddit.com answers 403 to /comments/.json. */
+function absorbRedlib(html: string, threadId: string, into: Map<string, LoungeNode>) {
+  const token = /<div id="([a-z0-9]+)" class="comment\b[^"]*">|<blockquote class="replies">|<\/blockquote>/g;
+  const stack: string[] = [];
+  let current = "";
+  let match: RegExpExecArray | null;
+  while ((match = token.exec(html))) {
+    if (match[0].startsWith("</")) {
+      stack.pop();
+      continue;
+    }
+    if (match[0].startsWith("<blockquote")) {
+      if (current) stack.push(current);
+      continue;
+    }
+    const id = match[1] ?? "";
+    const end = html.indexOf('<blockquote class="replies">', match.index);
+    const head = html.slice(match.index, end > match.index ? end : match.index + 4000);
+    const author = (
+      /class="comment_author[^"]*"[^>]*href="\/user\/([^"]+)"/.exec(head)?.[1] ??
+      (/class="comment_author[^"]*"[^>]*>\s*([^<]+)/.exec(head)?.[1] ?? "").replace(/^u\//, "")
+    ).trim();
+    const title = /class="created" title="([^"]+)"/.exec(head)?.[1] ?? "";
+    const bodyHtml = /<div class="comment_body[^"]*">([\s\S]*?)<\/div>\s*<\/div>/.exec(head)?.[1] ?? "";
+    const created = title ? Math.floor(Date.parse(title) / 1000) : 0;
+    const parent = stack.at(-1);
+    into.set(id, {
+      id,
+      parent: parent ? `t1_${parent}` : `t3_${threadId}`,
+      author,
+      body: decodeLoungeHtml(bodyHtml),
+      created: Number.isFinite(created) ? created : 0,
+      stickied: false,
+    });
+    current = id;
+  }
+}
+
+async function pullRedditLounge(threadId: string, sort: "new" | "old", into: Map<string, LoungeNode>) {
+  const url = `https://www.reddit.com/r/pennystocks%2Fcomments/${threadId}/.json?limit=100&sort=${sort}&depth=6&raw_json=1`;
   const res = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    },
+    headers: { Accept: "application/json", "User-Agent": LOUNGE_BROWSER },
     signal: AbortSignal.timeout(18000),
     redirect: "follow",
   });
@@ -1190,12 +1246,63 @@ async function pullLounge(threadId: string, sort: "new" | "old", into: Map<strin
   absorbLounge(tree[1], into);
 }
 
+async function pullLoungeMirror(threadId: string, sort: "new" | "old", into: Map<string, LoungeNode>) {
+  let last = "espejo sin respuesta";
+  for (const base of LOUNGE_MIRRORS) {
+    const res = await fetch(`${base}/r/pennystocks/comments/${encodeURIComponent(threadId)}?sort=${sort}`, {
+      headers: { Accept: "text/html", "User-Agent": LOUNGE_BROWSER },
+      signal: AbortSignal.timeout(18000),
+      redirect: "follow",
+    });
+    if (!res.ok) {
+      await discardBody(res);
+      last = `espejo ${res.status}`;
+      continue;
+    }
+    const before = into.size;
+    absorbRedlib(await res.text(), threadId, into);
+    if (into.size > before) return;
+    last = "espejo vacio";
+  }
+  throw new Error(last);
+}
+
+async function pullLounge(threadId: string, sort: "new" | "old", into: Map<string, LoungeNode>, gate: { redditDown: boolean }) {
+  let redditError = gate.redditDown ? "reddit 403" : "";
+  if (!gate.redditDown) {
+    const before = into.size;
+    try {
+      await pullRedditLounge(threadId, sort, into);
+      if (into.size > before) return "reddit";
+      redditError = "reddit vacio";
+    } catch (err) {
+      redditError = (err as Error).message;
+      if (redditError.startsWith("reddit 403") || redditError === "reddit no-json") gate.redditDown = true;
+    }
+  }
+  const before = into.size;
+  try {
+    await pullLoungeMirror(threadId, sort, into);
+  } catch (err) {
+    throw new Error(`${redditError} · ${(err as Error).message}`);
+  }
+  if (into.size > before) return `${redditError} · espejo`;
+  throw new Error(`${redditError} · espejo vacio`);
+}
+
 async function fetchLoungeTree(threadId: string, cursor: number, into: Map<string, LoungeNode>) {
-  await pullLounge(threadId, "new", into);
-  if (!(cursor > 0)) return;
+  const gate = { redditDown: false };
+  const source = await pullLounge(threadId, "new", into, gate);
+  if (!(cursor > 0)) return source;
   const times = [...into.values()].map((node) => node.created).filter((t) => t > 0);
   const oldest = times.length ? Math.min(...times) : 0;
-  if (oldest > cursor + 15 * 60) await pullLounge(threadId, "old", into);
+  if (!(oldest > cursor + 15 * 60)) return source;
+  try {
+    await pullLounge(threadId, "old", into, gate);
+  } catch (err) {
+    return `${source} · ${(err as Error).message}`;
+  }
+  return source;
 }
 
 function absorbArctic(rows: { id?: string; parent_id?: string; author?: string; body?: string; created_utc?: number; stickied?: boolean }[], into: Map<string, LoungeNode>) {
@@ -1239,7 +1346,7 @@ export async function collectLoungeNotices(): Promise<{ note: string; notices: L
   const map = new Map<string, LoungeNode>();
   let source = "reddit";
   try {
-    await fetchLoungeTree(threadId, cursor, map);
+    source = await fetchLoungeTree(threadId, cursor, map);
   } catch (err) {
     source = (err as Error).message;
     console.warn(`[lounge] ${source}`);
@@ -1253,6 +1360,8 @@ export async function collectLoungeNotices(): Promise<{ note: string; notices: L
     console.warn(`[lounge] archivo: ${(err as Error).message}`);
     if (source !== "reddit") source = `${source} · archivo sin respuesta`;
   }
+  const newest = Math.max(0, ...[...map.values()].map((node) => node.created));
+  const until = newest > 0 ? ` · hasta ${loungeClock(newest)}` : "";
   if (!map.size) {
     setMeta("lounge_thread", threadId);
     return { note: `${label}: ${source}`, notices: [] };
@@ -1307,5 +1416,5 @@ export async function collectLoungeNotices(): Promise<{ note: string; notices: L
   }
   setMeta("lounge_thread", threadId);
   if (advanced > 0) setMeta("lounge_cursor", String(advanced));
-  return { note: `${label}: ${notices.length} nuevos · ${source}`, notices };
+  return { note: `${label}: ${notices.length} nuevos · ${source}${until}`, notices };
 }

@@ -1,5 +1,5 @@
 import { db, json, nowIso, parseJson, getSetting, getMeta, setMeta } from "./db.ts";
-import { isExtendedHours, isRth } from "./config.ts";
+import { config, isExtendedHours, isRth } from "./config.ts";
 import { listFactors, listIdeas, listTickers, listTickersByCategory } from "./universe.ts";
 import { syncTemporalCartera } from "./temporal.ts";
 import { allQuoteSymbols, allQuotes, getQuote, needsDailyBars, readVolumeSignal, refreshFromCnbc, refreshCnbcCurve, refreshCnbcDaily, refreshFundamentals, refreshSymbolSoon, SCREEN_QUOTE_SYMBOLS, symbolsToRenew, threeDayTrend } from "./quotes.ts";
@@ -1064,6 +1064,18 @@ async function runTapeLoop() {
   }
 }
 
+function jobClock() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: config.tz || "America/Santiago",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const g = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+  return `${g("hour")}:${g("minute")}:${g("second")}`;
+}
+
 async function runLoungeLoop() {
   const def = JOBS.find((j) => j.id === "reddit.lounge");
   if (!def) return;
@@ -1073,12 +1085,12 @@ async function runLoungeLoop() {
     safePublish(def);
     const note = await def.run();
     const secs = ((Date.now() - started) / 1000).toFixed(1);
-    console.log(`[job] lounge ok ${secs}s · ${note}`);
+    console.log(`[job] ${jobClock()} lounge ok ${secs}s · ${note}`);
     safeSetJob(def.id, "ok", null, note);
     lastOk.set(def.id, Date.now());
   } catch (err) {
     const msg = (err as Error).message.slice(0, 240);
-    console.error(`[job] lounge error · ${msg}`);
+    console.error(`[job] ${jobClock()} lounge error · ${msg}`);
     safeSetJob(def.id, "error", msg, null);
   } finally {
     safePublish(def);
